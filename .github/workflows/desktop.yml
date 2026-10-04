@@ -82,6 +82,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+        timeout-minutes: 5
       - name: Package unsigned pilot installer
         run: npm run package:desktop -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
       - name: Verify packaged Mac first launch

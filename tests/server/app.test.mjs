@@ -219,13 +219,22 @@ test('the team token limit is shared across logins and blocks calls before the p
 });
 
 test('restarting with a rotated shared code revokes sessions and preserves glossary', async (t) => {
-  const fx = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'stage-rotation-'));
+  let fx;
+  let rotated;
+  // Windows cannot unlink a SQLite database while another fixture still has it open.
+  t.after(async () => {
+    await rotated?.close();
+    await fx?.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  fx = await fixture(t, { directory: root });
   const oldClient = fx.client();
   await oldClient.unlock();
   await oldClient.call('/api/team', { method: 'PATCH', body: { name: 'Saved team' } });
   const oldCookie = oldClient.cookie;
   await fx.close();
-  const rotated = await fixture(t, { directory: fx.root, code: 'different-team-code-987654' });
+  rotated = await fixture(t, { directory: root, code: 'different-team-code-987654' });
   const client = rotated.client();
   assert.equal((await client.call('/api/session', { cookieOverride: oldCookie })).body.authenticated, false);
   assert.equal((await client.unlock(CODE)).status, 401);
@@ -246,10 +255,11 @@ test('local bootstrap persists a private code and remote hosting requires an exp
 
 test('production serves the built client for page routes while retaining API 404s', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'stage-static-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'dist'));
   await writeFile(join(root, 'dist/index.html'), '<!doctype html><title>Stage fixture</title>');
   const fx = await fixture(t, { directory: root });
+  // Register after the fixture's close hook so Windows releases its database files first.
+  t.after(() => rm(root, { recursive: true, force: true }));
   const page = await fetch(`${fx.base}/present`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Stage fixture/);

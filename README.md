@@ -30,7 +30,7 @@ The website is a browser preview with a separate caption window. Install the des
 | Windows x64 | `win-x64` installer |
 | Linux x64 | `linux-x64` AppImage or DEB |
 
-The initial release targets these four platforms. Native Windows ARM64 and Linux ARM64 installers are not included. These are unsigned pilot builds. Release notes list the installers actually available and their validation status. Windows/Linux builds and real presentation setups still require verification; successful packaging alone does not verify an overlay during a talk. macOS or Windows may warn about an unsigned app. Ask your organizer if you are unsure about a download.
+The initial release targets these four platforms. Native Windows ARM64 and Linux ARM64 installers are not included. These are unsigned pilot builds. Release notes list the installers actually available and their validation status. Successful packaging alone does not verify an overlay during a talk. Test microphone capture, projector placement, and fullscreen behavior on each presentation computer. macOS or Windows may warn about an unsigned app. Ask your organizer if you are unsure about a download.
 
 Fullscreen behavior depends on the operating system and display setup. Linux Wayland compositors can restrict overlay positioning or always-on-top behavior; an X11 session may be needed. Accent accuracy and delay depend on the speaker, microphone, network, and translation service; no accent or latency guarantee is implied.
 
