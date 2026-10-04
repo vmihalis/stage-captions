@@ -138,7 +138,7 @@ jobs:
               f'Stage-{version}-mac-arm64.dmg', f'Stage-{version}-mac-arm64.zip',
               f'Stage-{version}-mac-x64.dmg', f'Stage-{version}-mac-x64.zip',
               f'Stage-{version}-win-x64.exe',
-              f'Stage-{version}-linux-x64.AppImage', f'Stage-{version}-linux-x64.deb',
+              f'Stage-{version}-linux-x86_64.AppImage', f'Stage-{version}-linux-amd64.deb',
           }
           actual = {path.name for path in directory.iterdir() if path.is_file()}
           if actual != expected:
@@ -160,7 +160,7 @@ jobs:
           - Apple Silicon Mac: mac-arm64.dmg (or .zip)
           - Intel Mac: mac-x64.dmg (or .zip)
           - Windows x64: win-x64.exe
-          - Linux x64: linux-x64.AppImage or linux-x64.deb
+          - Linux x64: linux-x86_64.AppImage or linux-amd64.deb
 
           These pilot packages are unsigned. The macOS packages are not notarized, so macOS and Windows may show security warnings. Windows ARM and Linux ARM installers are not included.
 

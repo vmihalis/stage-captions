@@ -18,7 +18,7 @@ npm run check
 npm run desktop:package
 ```
 
-The Electron Builder configuration targets Mac DMG/ZIP, Windows NSIS, and Linux AppImage/DEB, with x64 and ARM64 variants. Build on the corresponding operating system. Generated files go to `release/` and stay out of Git. Linux DEB builds need valid maintainer/homepage metadata; see the packaging configuration and release workflow for supplied values or environment overrides.
+The Electron Builder configuration targets Mac DMG/ZIP, Windows NSIS, and Linux AppImage/DEB. Build on the corresponding operating system; the release workflow selects each architecture explicitly. Generated files go to `release/` and stay out of Git. Linux x64 files use the target format's architecture name: `Stage-<version>-linux-x86_64.AppImage` and `Stage-<version>-linux-amd64.deb`. Linux DEB builds need valid maintainer/homepage metadata; see the packaging configuration and release workflow for supplied values or environment overrides.
 
 The [GitHub Actions workflows](../.github/workflows) build Mac ARM64/x64, Windows x64, and Linux x64 release artifacts. Windows ARM64 and Linux ARM64 are not part of the initial release matrix. Inspect the workflow run and release assets before telling users a particular installer is available. Signing and notarization require the maintainer's own credentials; without them the artifacts are unsigned pilot builds.
 

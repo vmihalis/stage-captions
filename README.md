@@ -28,7 +28,7 @@ The website is a browser preview with a separate caption window. Install the des
 | Apple Silicon Mac | `mac-arm64` ZIP or DMG |
 | Intel Mac | `mac-x64` ZIP or DMG |
 | Windows x64 | `win-x64` installer |
-| Linux x64 | `linux-x64` AppImage or DEB |
+| Linux x64 | `linux-x86_64.AppImage` or `linux-amd64.deb` |
 
 The initial release targets these four platforms. Native Windows ARM64 and Linux ARM64 installers are not included. These are unsigned pilot builds. Release notes list the installers actually available and their validation status. Successful packaging alone does not verify an overlay during a talk. Test microphone capture, projector placement, and fullscreen behavior on each presentation computer. macOS or Windows may warn about an unsigned app. Ask your organizer if you are unsure about a download.
 
