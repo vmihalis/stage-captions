@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stage captions</title>
+    <link rel="stylesheet" href="overlay.css">
+    <script defer src="overlay.js"></script>
+  </head>
+  <body>
+    <section id="caption-card" aria-live="off">
+      <div id="caption-status" hidden></div>
+      <div id="japanese" lang="ja"><span id="committed"></span><span id="partial"></span></div>
+      <div id="english" lang="en"></div>
+    </section>
+  </body>
+</html>

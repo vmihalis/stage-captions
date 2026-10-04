@@ -1,0 +1,186 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish, such as v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      commit: ${{ steps.version.outputs.commit }}
+    steps:
+      - name: Validate tag syntax
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo 'Use a version tag such as v0.1.0.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Match the tag to package.json
+        id: version
+        shell: bash
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); if (process.env.RELEASE_TAG !== `v${p.version}`) throw new Error("Tag must match package.json version");'
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: arm64
+            runner: macos-15
+          - platform: mac
+            arch: x64
+            runner: macos-15-intel
+          - platform: win
+            arch: x64
+            runner: windows-2025
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      STAGE_APP_HOMEPAGE: ${{ github.server_url }}/${{ github.repository }}
+      STAGE_APP_MAINTAINER: Stage contributors <${{ github.repository_owner }}@users.noreply.github.com>
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Package unsigned pilot installer
+        run: npm run package:desktop -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Verify packaged Mac first launch
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_ARCH" == ARM64 ]]; then
+            app_directory=release/mac-arm64
+          else
+            app_directory=release/mac
+          fi
+          node tests/desktop/packaged-smoke.mjs "$app_directory/Stage.app/Contents/MacOS/Stage" outputs/packaged-setup.png
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/Stage-*.dmg
+            release/Stage-*.zip
+            release/Stage-*.exe
+            release/Stage-*.AppImage
+            release/Stage-*.deb
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish installers
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: stage-*
+          path: installers
+          merge-multiple: true
+      - name: Verify the installer set and generate checksums
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          directory = Path('installers')
+          version = os.environ['RELEASE_TAG'][1:]
+          expected = {
+              f'Stage-{version}-mac-arm64.dmg', f'Stage-{version}-mac-arm64.zip',
+              f'Stage-{version}-mac-x64.dmg', f'Stage-{version}-mac-x64.zip',
+              f'Stage-{version}-win-x64.exe',
+              f'Stage-{version}-linux-x64.AppImage', f'Stage-{version}-linux-x64.deb',
+          }
+          actual = {path.name for path in directory.iterdir() if path.is_file()}
+          if actual != expected:
+              raise SystemExit(f'Installer set differs: missing={expected - actual}, unexpected={actual - expected}')
+          checksums = []
+          for name in sorted(expected):
+              with (directory / name).open('rb') as installer:
+                  checksum = hashlib.file_digest(installer, 'sha256').hexdigest()
+              checksums.append(f'{checksum}  {name}\n')
+          (directory / 'SHA256SUMS').write_text(''.join(checksums))
+          PY
+      - name: Publish a complete release
+        shell: bash
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Stage pilot: live English-to-Japanese captions in a floating desktop window.
+
+          Download the installer for your computer:
+          - Apple Silicon Mac: mac-arm64.dmg (or .zip)
+          - Intel Mac: mac-x64.dmg (or .zip)
+          - Windows x64: win-x64.exe
+          - Linux x64: linux-x64.AppImage or linux-x64.deb
+
+          These pilot packages are unsigned. The macOS packages are not notarized, so macOS and Windows may show security warnings. Windows ARM and Linux ARM installers are not included.
+
+          On first launch, enter the HTTPS server address and shared team access code supplied by your organizer. No team credentials or Soniox API key are included in the installers. Microphone audio is sent directly to Soniox when you start live captions.
+
+          Run a rehearsal with your microphone, projector, presentation apps, and fullscreen modes before your event. A successful build does not verify every operating system's overlay behavior or the accuracy of your team's speech.
+
+          SHA256SUMS contains checksums for every installer. For setup and hosting instructions, see the repository README.
+          NOTES
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$draft" != true ]]; then
+              echo 'This release is already public. Publish a new version instead of replacing existing installers.' >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "Stage $RELEASE_TAG — pilot" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" installers/* --clobber
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --notes-file release-notes.md
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file release-notes.md
+          fi

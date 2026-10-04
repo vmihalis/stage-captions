@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; connect-src 'none'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Stage</title>
+    <link rel="stylesheet" href="connection.css">
+    <script defer src="connection.js"></script>
+  </head>
+  <body>
+    <main>
+      <div class="brand"><span class="mark">S</span> STAGE</div>
+      <p class="eyebrow">One setup. Every presentation.</p>
+      <h1>Your words.<br>Everyone’s language.</h1>
+      <p class="description">Enter the Stage address shared by your team. This computer will remember it for your next presentation.</p>
+      <form id="connection-form">
+        <label for="server-address">Team server address</label>
+        <input id="server-address" type="url" placeholder="https://stage.your-team.com" required autocomplete="url" spellcheck="false" aria-describedby="error">
+        <p id="error" role="alert"></p>
+        <button type="submit">Connect to Stage <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="note">Use an address from someone you trust. This server provides the app and translation service.</p>
+      <p class="note" id="development-note" hidden>Development: localhost HTTP addresses are also supported.</p>
+    </main>
+  </body>
+</html>

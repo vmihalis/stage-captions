@@ -1,0 +1,20 @@
+@font-face { font-family: 'Stage Japanese'; src: url('fonts/NotoSansJP.ttf') format('truetype'); font-weight: 100 900; font-display: swap; }
+:root { color-scheme: dark; --caption-size: 48px; --caption-opacity: .88; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+body { display: flex; align-items: flex-end; justify-content: center; padding: 0; user-select: none; }
+body.top { align-items: flex-start; }
+#caption-card { width: 100%; max-height: 100%; padding: 18px 28px 22px; border-radius: 14px;
+  color: oklch(97% .01 106); background: oklch(18% .018 110 / var(--caption-opacity));
+  font-family: 'Stage Japanese', -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans CJK JP", "Noto Sans JP", sans-serif;
+  text-shadow: 0 1px 2px oklch(10% .01 110); }
+#japanese { font-size: var(--caption-size); line-height: 1.45; font-weight: 600; overflow: hidden;
+  max-height: 2.9em; overflow-wrap: anywhere; overflow-anchor: none; }
+#partial { color: oklch(88% .025 110); }
+#english { margin-top: 10px; font-size: calc(var(--caption-size) * .54); line-height: 1.35; color: oklch(79% .018 110);
+  overflow: hidden; white-space: nowrap; }
+#caption-status { display: inline-block; margin-bottom: 10px; border: 1px solid oklch(70% .04 110); border-radius: 5px;
+  padding: 3px 8px; font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+#caption-status[data-status="rehearsal"] { color: oklch(90% .10 95); border-color: oklch(58% .10 95); background: oklch(30% .06 95); }
+#caption-status[data-status="error"], #caption-status[data-status="reconnecting"] { color: oklch(88% .08 65); border-color: oklch(59% .10 65); }
+[hidden] { display: none !important; }
