@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { MicrophoneSource, SonioxClient } from '@soniox/client';
 import type { Recording, TranscriptionContext } from '@soniox/client';
 import { api } from '../lib/api';
+import { speechConfig } from '../lib/speech-config';
+import type { CaptionPace } from '../lib/speech-config';
 import { accumulate, emptyCaptions, rehearsalLines } from '../lib/captions';
 import { advanceAudienceCaptions, clearAudienceCaptions, emptyAudienceCaptions, expireAudienceCaptions } from '../lib/audience-captions';
 import type { Captions, CaptionStatus } from '../types';
@@ -66,7 +68,7 @@ export function useCaptions() {
     finally { clearTimeout(timeout); cancel(); setStatus('stopped'); setMuted(false); }
   }, [cancel]);
 
-  const start = useCallback((deviceId: string) => {
+  const start = useCallback((deviceId: string, pace: CaptionPace = 'responsive') => {
     cancel();
     const current = generation.current;
     setCaptions(emptyCaptions()); resetAudience(); setError(''); setStatus('connecting');
@@ -92,13 +94,7 @@ export function useCaptions() {
     const active = client.realtime.record({
       model: 'stt-rt-v5',
       source,
-      session_config: resolved => ({
-        ...resolved.stt_defaults,
-        model: resolved.stt_defaults?.model ?? 'stt-rt-v5',
-        language_hints: ['en'],
-        translation: { type: 'one_way', target_language: 'ja' },
-        enable_endpoint_detection: true,
-      }),
+      session_config: resolved => speechConfig(resolved.stt_defaults, pace),
       auto_reconnect: true,
       max_reconnect_attempts: 3,
       reconnect_base_delay_ms: 800,

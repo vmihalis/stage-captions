@@ -3,6 +3,7 @@ import { ArrowRight, AudioLines, BookOpen, Captions as CaptionsIcon, Check, Chev
 import { api } from './lib/api';
 import { captionTail, japaneseWindow, parseTranslations } from './lib/captions';
 import { useCaptions } from './hooks/useCaptions';
+import type { CaptionPace } from './lib/speech-config';
 import JapaneseCaption from './JapaneseCaption';
 import type { Display, OverlayOptions, OverlayPayload, OverlayState, Session, Team } from './types';
 
@@ -25,6 +26,7 @@ export default function App() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
   const [deviceId, setDeviceId] = useState('default');
+  const [pace, setPace] = useState<CaptionPace>('responsive');
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [micChecking, setMicChecking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -43,6 +45,7 @@ export default function App() {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const live = useCaptions();
   const desktop = window.stageDesktop;
+  const localPreview = import.meta.env.VITE_STAGE_PREVIEW === 'true';
   const shortcut = /Mac/i.test(navigator.platform) ? '⌘⇧H' : 'Ctrl+Shift+H';
   const isBusy = busyStates.includes(live.status);
   const authorized = session?.authenticated ?? false;
@@ -193,7 +196,7 @@ export default function App() {
         setOverlayOpen(true);
       }
       if (rehearsal) live.rehearse();
-      else live.start(deviceId);
+      else live.start(deviceId, pace);
     } catch {
       setNotice('Could not show captions on your screen. Try Show captions on screen before starting again.');
     } finally { setStarting(false); }
@@ -223,6 +226,7 @@ export default function App() {
     </header>
     <div className="page-width">
       <nav className="tabs" aria-label="Workspace"><button className={tab === 'present' ? 'active' : ''} onClick={() => setTab('present')}><Radio size={17} /> Present</button><button className={tab === 'vocabulary' ? 'active' : ''} onClick={() => setTab('vocabulary')}><BookOpen size={17} /> Team vocabulary</button><button className={tab === 'setup' ? 'active' : ''} onClick={() => setTab('setup')}><CircleHelp size={17} /> Setup guide</button><span className="platform-label">{desktop ? 'Desktop app' : 'Browser preview'}</span></nav>
+      {localPreview && <div className="notice" role="status">Local streaming preview · Run a rehearsal with sample captions. Live translation is not configured here.</div>}
       {notice && <div className="notice" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={16} /></button></div>}
       {serverError && <div className="notice error" role="alert"><span>{serverError} Rehearsal remains available.</span><button className="text-button" onClick={refresh}>Retry connection</button></div>}
       {tab === 'present' && <>
@@ -252,6 +256,9 @@ export default function App() {
             <div className="select-with-icon"><Mic size={17} /><select id="microphone" value={deviceId} disabled={isBusy || micChecking} onChange={event => setDeviceId(event.target.value)}><option value="default">System default microphone</option>{devices.filter(device => device.deviceId && device.deviceId !== 'default').map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></div>
             <div className="mic-check-row"><div className="level-meter" aria-label={micChecking ? 'Microphone input level' : 'Microphone check inactive'}>{Array.from({ length: 16 }, (_, index) => <i key={index} className={micChecking && index / 16 < micLevel ? 'lit' : ''} />)}</div><button className="text-button" disabled={isBusy} onClick={checkMic}>{micChecking ? 'Stop check' : 'Check mic'}</button></div>
             {micChecking && <p className="field-hint">Local check only. Stops after 10 seconds.</p>}
+            <label className="field-label" htmlFor="caption-pace">Caption pace</label>
+            <select id="caption-pace" value={pace} disabled={isBusy || starting} aria-describedby="caption-pace-hint" onChange={event => setPace(event.target.value as CaptionPace)}><option value="responsive">Responsive</option><option value="context">More context</option></select>
+            <p className="field-hint" id="caption-pace-hint">{pace === 'responsive' ? 'Earlier phrase boundaries. Draft words may change as you speak.' : 'Waits longer for complete phrases. Useful if you pause mid-sentence.'} Choose before starting captions.</p>
             <div className="control-separator" />
             <label className="field-label" htmlFor="display">Caption output</label>
             {desktop ? <select id="display" value={options.displayId ?? ''} onFocus={() => void desktop.getDisplays().then(setDisplays)} onChange={event => setOptions({ ...options, displayId: event.target.value || undefined })}><option value="">Primary display</option>{displays.map(display => <option key={display.id} value={display.id}>{display.label} · {display.width} × {display.height}</option>)}</select> : <div className="browser-output"><Monitor size={18} /><div><strong>Separate browser window</strong><span>Use the desktop app to float captions over slides.</span></div></div>}

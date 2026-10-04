@@ -3,9 +3,12 @@ import type { Captions } from '../types';
 export type Token = { text: string; is_final?: boolean; translation_status?: string; language?: string };
 export const emptyCaptions = (): Captions => ({ english: '', japanese: '', partialEnglish: '', partialJapanese: '' });
 
-// Each response replaces the uncommitted hypothesis. Final tokens arrive once.
+// Each text-bearing response replaces the uncommitted hypothesis. Final tokens arrive once.
 // Keep source and target independent: translated text may arrive after source endpoints.
 export function accumulate(previous: Captions, tokens: Token[]): Captions {
+  // The SDK strips endpoint/finalization markers, leaving an empty result.
+  // Such a result carries no replacement text and must not erase the current hypothesis.
+  if (!tokens.some(token => token.text.length > 0 && !/^<(end|fin)>$/.test(token.text))) return previous;
   const next = { ...previous, partialEnglish: '', partialJapanese: '' };
   for (const token of tokens) {
     if (/^<(end|fin)>$/.test(token.text)) continue;

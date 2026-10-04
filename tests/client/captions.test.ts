@@ -8,6 +8,43 @@ test('provisional text is replaced rather than accumulated', () => {
   assert.equal(second.english, 'Thank you'); assert.equal(second.partialEnglish, '');
   assert.equal(second.japanese, ''); assert.equal(second.partialJapanese, 'ありがとうございます');
 });
+test('empty and control-only results preserve provisional captions until replacement text arrives', () => {
+  let state = accumulate(emptyCaptions(), [
+    { text: 'Today ', is_final: true, translation_status: 'original' },
+    { text: 'we are', is_final: false, translation_status: 'original' },
+    { text: '本日は', is_final: true, translation_status: 'translation', language: 'ja' },
+    { text: 'ご紹介', is_final: false, translation_status: 'translation', language: 'ja' },
+  ]);
+  const beforeControl = { ...state };
+  for (const tokens of [[], [{ text: '<end>', is_final: true }],
+    [{ text: '<fin>', is_final: true }, { text: '<end>', is_final: true }, { text: '' }]]) {
+    state = accumulate(state, tokens);
+    assert.deepEqual(state, beforeControl);
+  }
+
+  state = accumulate(state, [
+    { text: 'we introduce', is_final: false, translation_status: 'original' },
+    { text: '新しい製品を紹介', is_final: false, translation_status: 'translation', language: 'ja' },
+  ]);
+  assert.equal(state.partialEnglish, 'we introduce');
+  assert.equal(state.partialJapanese, '新しい製品を紹介');
+  state = accumulate(state, [
+    { text: 'we introduce a product.', is_final: true, translation_status: 'original' },
+    { text: '新しい製品を紹介します。', is_final: true, translation_status: 'translation', language: 'ja' },
+    { text: '<end>', is_final: true },
+  ]);
+  assert.deepEqual(state, { english: 'Today we introduce a product.', japanese: '本日は新しい製品を紹介します。',
+    partialEnglish: '', partialJapanese: '' });
+});
+test('text-bearing results still replace the whole provisional hypothesis', () => {
+  const previous = accumulate(emptyCaptions(), [
+    { text: 'an early guess', is_final: false, translation_status: 'original' },
+    { text: '仮の訳', is_final: false, translation_status: 'translation', language: 'ja' },
+  ]);
+  const next = accumulate(previous, [{ text: 'a revised guess', is_final: false, translation_status: 'original' }]);
+  assert.equal(next.partialEnglish, 'a revised guess');
+  assert.equal(next.partialJapanese, '', 'A genuine replacement result can withdraw provisional Japanese.');
+});
 test('translation arriving after an English endpoint remains visible', () => {
   let state = accumulate(emptyCaptions(), [{ text: 'Hello.', is_final: true, translation_status: 'original' }, { text: '<end>', is_final: true }]);
   state = accumulate(state, [{ text: 'こんにちは。', is_final: true, translation_status: 'translation', language: 'ja' }]);
