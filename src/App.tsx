@@ -40,6 +40,7 @@ export default function App() {
   const [shortcutRegistered, setShortcutRegistered] = useState<boolean | null>(null);
   const [starting, setStarting] = useState(false);
   const [options, setOptions] = useState<OverlayOptions>({ fontSize: 42, position: 'bottom', showEnglish: false, opacity: 0.9, clickThrough: true });
+  const [fontSizeInput, setFontSizeInput] = useState('42');
   const [now, setNow] = useState(Date.now());
   const channelId = useRef(crypto.randomUUID());
   const channel = useRef<BroadcastChannel | null>(null);
@@ -61,6 +62,21 @@ export default function App() {
   const modeLabel = mode === 'auto' ? 'English ↔ 日本語' : mode === 'ja_to_en' ? '日本語 → English' : 'English → 日本語';
   const outputState = useRef({ payload: outputPayload, options });
   outputState.current = { payload: outputPayload, options };
+
+  const changeFontSize = (value: string) => {
+    setFontSizeInput(value);
+    const size = Number(value);
+    if (value.trim() && Number.isInteger(size) && size >= 24 && size <= 96) {
+      setOptions(previous => ({ ...previous, fontSize: size }));
+    }
+  };
+  const finishFontSize = () => {
+    const entered = Number(fontSizeInput);
+    const size = fontSizeInput.trim() && Number.isFinite(entered)
+      ? Math.min(96, Math.max(24, Math.round(entered))) : options.fontSize;
+    setFontSizeInput(String(size));
+    setOptions(previous => ({ ...previous, fontSize: size }));
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -237,7 +253,7 @@ export default function App() {
             <div className="section-toolbar"><div><Monitor size={17} /><strong>Audience preview</strong></div><span className="field-hint">{desktop ? overlayOpen ? 'On-screen captions shown' : 'On-screen captions hidden' : 'Presenter preview'}</span></div>
             <div className={`stage-preview ${options.position} ${localPreview && previewLayout === 'reserved' ? 'reserved' : ''}`}>
               {localPreview && previewLayout === 'reserved' ? <RehearsalSlide /> : <div className="slide-placeholder" aria-hidden="true"><span className="slide-small-line" /><span className="slide-large-line" /><span className="slide-medium-line" /><div className="slide-chart"><span /><span /><span /><span /><span /></div><p>Your slides or live demo</p></div>}
-              <div className="preview-captions" style={{ backgroundColor: `oklch(0.12 0 0 / ${options.opacity})`, '--caption-size': `${Math.min(options.fontSize, 40)}px` } as React.CSSProperties}>
+              <div className="preview-captions" style={{ backgroundColor: `oklch(0.12 0 0 / ${options.opacity})`, '--caption-size': `${options.fontSize}px` } as React.CSSProperties}>
                 {live.status === 'rehearsal' && <span className="rehearsal-label">Rehearsal · Sample text · Microphone off</span>}
                 {interrupted ? <p className="caption-placeholder">{statusNames[live.status]}</p> : (outputPayload.japanese || outputPayload.partialJapanese) ? <>
                   {options.showEnglish && <p className="caption-source">{outputPayload.english}</p>}
@@ -270,7 +286,7 @@ export default function App() {
             <button className="button secondary full" onClick={() => void openOutput()} aria-pressed={overlayOpen}><ExternalLink size={17} />{overlayOpen ? 'Hide captions' : desktop ? 'Show captions on screen' : 'Open caption window'}</button>
             {desktop && <p className="field-hint">{shortcutRegistered === false ? 'Shortcut unavailable: another app may be using it. Use this button' : `${shortcut} · ${shortcutRegistered === null ? 'hide/show an open caption window' : 'show/hide captions'}`}. Hiding keeps the microphone on.</p>}
             <p className="field-hint">Old captions clear after 6 seconds without new words. Listening continues.</p>
-            <div className="field-pair"><div><label className="field-label" htmlFor="position">Position</label><select id="position" value={options.position} onChange={event => setOptions({ ...options, position: event.target.value as 'top' | 'bottom' })}><option value="bottom">Bottom</option><option value="top">Top</option></select></div><div><label className="field-label" htmlFor="font-size">Text size</label><select id="font-size" value={options.fontSize} onChange={event => setOptions({ ...options, fontSize: Number(event.target.value) })}>{[28, 34, 42, 52, 64, 80].map(size => <option key={size} value={size}>{size} px</option>)}</select></div></div>
+            <div className="field-pair"><div><label className="field-label" htmlFor="position">Position</label><select id="position" value={options.position} onChange={event => setOptions({ ...options, position: event.target.value as 'top' | 'bottom' })}><option value="bottom">Bottom</option><option value="top">Top</option></select></div><div><label className="field-label" htmlFor="font-size">Text size (px)</label><input id="font-size" type="number" min="24" max="96" step="1" inputMode="numeric" value={fontSizeInput} aria-describedby="font-size-hint" onChange={event => changeFontSize(event.target.value)} onBlur={finishFontSize} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><p className="field-hint" id="font-size-hint">24–96 px</p></div></div>
             <label className="check-label"><input type="checkbox" checked={options.showEnglish} onChange={event => setOptions({ ...options, showEnglish: event.target.checked })} /><span>Also show spoken text</span></label>
             <label className="range-label" htmlFor="opacity"><span>Background opacity</span><output>{Math.round(options.opacity * 100)}%</output></label><input id="opacity" type="range" min="0.4" max="1" step="0.05" value={options.opacity} onChange={event => setOptions({ ...options, opacity: Number(event.target.value) })} />
             <div className="control-separator" />
