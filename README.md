@@ -12,12 +12,12 @@ Your organizer provides a **team server address** and a **shared team access cod
 2. Open **Stage**. Enter the **Team server address** supplied by your organizer, such as `https://captions.example.com`, and choose **Connect to Stage**.
 3. Choose **Connect team** and enter the shared access code.
 4. Select your microphone, choose **Check mic**, and allow microphone access when prompted. This short microphone check stays on your computer.
-5. Under **Caption output**, select the display connected to the projector. Choose **Open caption window** and adjust text size and position.
-6. Choose **Start captions**, speak English, and switch to your presentation. Japanese subtitles appear in the overlay.
+5. Under **Caption output**, select the display connected to the projector. Adjust text size and position.
+6. Choose **Start captions**. The overlay opens automatically. Speak English and switch to your presentation.
 
 Try **Run a rehearsal** first to check placement without using a microphone or translation account. Then rehearse with a real speaker and the actual projector to check accuracy and delay.
 
-The overlay lets clicks pass through to the app underneath. **Cmd+Shift+H** on Mac or **Ctrl+Shift+H** on Windows/Linux hides or shows captions. Hiding keeps listening; choose **Stop captions** to stop translation. Closing Stage also ends capture.
+The overlay lets clicks pass through to the app underneath. **Cmd+Shift+H** on Mac or **Ctrl+Shift+H** on Windows/Linux opens, hides, or shows captions. The **Show captions on screen / Hide captions** button does the same. Old text clears after six seconds without new recognized words or translation updates; late translations get a fresh reading window. Hiding keeps listening; choose **Stop captions** to stop translation. Closing Stage also ends capture.
 
 The website is a browser preview with a separate caption window. Install the desktop app for the floating overlay. A team connection lasts seven days; click **Team connected** to disconnect this computer.
 

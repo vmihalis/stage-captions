@@ -14,6 +14,9 @@ let connectionMessage = '';
 let changingServer = false;
 let quitting = false;
 let overlayReady = false;
+let overlayLoading;
+let overlayToggleQueue = Promise.resolve();
+let shortcutRegistered = false;
 let overlayOptions = { fontSize: 48, position: 'bottom', showEnglish: false, opacity: .88, clickThrough: true };
 let captions = { english: '', japanese: '', partialJapanese: '', status: 'idle' };
 
@@ -73,6 +76,17 @@ function sendCaptions() {
   }
 }
 
+function getOverlayState() {
+  const open = Boolean(overlayWindow && !overlayWindow.isDestroyed());
+  return { open, visible: open && overlayWindow.isVisible(), shortcutRegistered };
+}
+
+function sendOverlayState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stage:overlay-state', getOverlayState());
+  }
+}
+
 function positionOverlay() {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   const display = chooseDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, overlayOptions.displayId);
@@ -81,29 +95,58 @@ function positionOverlay() {
   overlayWindow.setBounds(overlayBounds(display.workArea, overlayOptions), false);
 }
 
-async function openOverlay(options) {
+function configureOverlay(options) {
   overlayOptions = normalizeOverlayOptions(options);
+  positionOverlay();
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.setIgnoreMouseEvents(overlayOptions.clickThrough);
+  }
+  sendCaptions();
+}
+
+async function openOverlay(options) {
+  configureOverlay(options);
   if (!overlayWindow || overlayWindow.isDestroyed()) {
     const display = chooseDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, overlayOptions.displayId);
+    if (!display) throw new Error('No display is available for captions.');
     overlayWindow = new BrowserWindow({ ...overlayBounds(display.workArea, overlayOptions),
       title: 'Stage captions', show: false, transparent: true, frame: false, hasShadow: false,
       resizable: false, movable: false, minimizable: false, maximizable: false,
       fullscreenable: false, focusable: false, skipTaskbar: true,
+      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
       webPreferences: rendererPreferences('overlay-preload.cjs', 'stage-overlay') });
-    guardNavigation(overlayWindow, url => url === localURL('overlay.html'));
-    overlayWindow.setAlwaysOnTop(true, 'screen-saver');
-    if (process.platform !== 'win32') overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    overlayWindow.on('closed', () => {
+    const createdWindow = overlayWindow;
+    guardNavigation(createdWindow, url => url === localURL('overlay.html'));
+    createdWindow.setAlwaysOnTop(true, 'screen-saver');
+    if (process.platform === 'darwin') {
+      // A nonactivating panel joins fullscreen Spaces without hiding Stage's Dock icon.
+      createdWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    } else if (process.platform === 'linux') createdWindow.setVisibleOnAllWorkspaces(true);
+    createdWindow.on('show', sendOverlayState);
+    createdWindow.on('hide', sendOverlayState);
+    createdWindow.on('closed', () => {
+      if (overlayWindow !== createdWindow) return;
       overlayWindow = undefined;
       overlayReady = false;
+      sendOverlayState();
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stage:overlay-closed');
     });
-    await overlayWindow.loadFile(path.join(__dirname, 'overlay.html'));
+    const loading = createdWindow.loadFile(path.join(__dirname, 'overlay.html')).catch(error => {
+      if (!createdWindow.isDestroyed()) createdWindow.destroy();
+      throw error;
+    }).finally(() => { if (overlayLoading === loading) overlayLoading = undefined; });
+    overlayLoading = loading;
+    sendOverlayState();
   }
+  const ownWindow = overlayWindow;
+  if (overlayLoading) await overlayLoading;
+  // The presenter can close Stage or change servers while the overlay loads.
+  if (ownWindow.isDestroyed() || overlayWindow !== ownWindow) return;
   positionOverlay();
-  overlayWindow.setIgnoreMouseEvents(overlayOptions.clickThrough);
-  overlayWindow.showInactive();
+  ownWindow.setIgnoreMouseEvents(overlayOptions.clickThrough);
+  ownWindow.showInactive();
   sendCaptions();
+  sendOverlayState();
 }
 
 function closeOverlay() {
@@ -161,6 +204,8 @@ function registerIPC() {
       primary: display.id === primaryId }));
   });
   ipcMain.handle('stage:open-overlay', async (event, options) => { requireMainSender(event); await openOverlay(options); });
+  ipcMain.handle('stage:configure-overlay', (event, options) => { requireMainSender(event); configureOverlay(options); });
+  ipcMain.handle('stage:overlay-state', event => { requireMainSender(event); return getOverlayState(); });
   ipcMain.handle('stage:close-overlay', event => { requireMainSender(event); closeOverlay(); });
   ipcMain.on('stage:update-overlay', (event, payload) => {
     // Send-only IPC must not crash the app when a renderer passes malformed data.
@@ -216,9 +261,18 @@ function configureMenu() {
 }
 
 function toggleOverlay() {
-  if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  if (overlayWindow.isVisible()) overlayWindow.hide();
-  else { positionOverlay(); overlayWindow.showInactive(); }
+  // Serialize rapid shortcut presses while a fresh caption window is loading.
+  overlayToggleQueue = overlayToggleQueue.then(async () => {
+    if (!mainWindow || mainWindow.isDestroyed() || changingServer || quitting) return;
+    if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+      overlayWindow.hide();
+      sendOverlayState();
+    } else await openOverlay(overlayOptions);
+  }).catch(() => {
+    console.error('Could not open the caption window. Try opening it from Stage.');
+    sendOverlayState();
+  });
+  return overlayToggleQueue;
 }
 
 async function savedOrigin() {
@@ -239,7 +293,8 @@ app.whenReady().then(async () => {
   registerIPC();
   configureMenu();
   // Registration can fail if another app owns the shortcut; menu controls remain available.
-  globalShortcut.register('CommandOrControl+Shift+H', toggleOverlay);
+  try { shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+H', toggleOverlay); }
+  catch { shortcutRegistered = false; }
   screen.on('display-removed', positionOverlay);
   screen.on('display-metrics-changed', positionOverlay);
   screen.on('display-added', positionOverlay);

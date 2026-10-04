@@ -24,13 +24,15 @@ export default function CaptionWindow() {
     return () => { clearInterval(timer); channel.close(); };
   }, []);
   const inactive = offline || ['stopped', 'error', 'reconnecting'].includes(payload.status);
+  const quiet = !inactive && payload.status === 'live' && !payload.japanese && !payload.partialJapanese
+    && (!options.showEnglish || !payload.english);
   return <main className={`caption-output ${options.position}`} style={{ '--caption-size': `${options.fontSize}px` } as React.CSSProperties}>
     <div className="output-toolbar"><span>Stage / Caption output</span><div>
       <button onClick={() => document.documentElement.requestFullscreen().catch(() => setFullscreenError('Fullscreen is unavailable. Maximize this window instead.'))}><Maximize size={16} /> Fullscreen</button>
       <button onClick={() => window.close()} aria-label="Close caption window"><X size={18} /></button>
     </div></div>
     {fullscreenError && <p className="output-notice">{fullscreenError}</p>}
-    <div className="output-caption" style={{ backgroundColor: `oklch(0.14 0 0 / ${options.opacity})` }}>
+    <div className="output-caption" hidden={quiet} style={{ backgroundColor: `oklch(0.14 0 0 / ${options.opacity})` }}>
       {payload.status === 'rehearsal' && <span className="rehearsal-label">Rehearsal · Sample text · Microphone off</span>}
       {inactive ? <p className="output-state">{offline ? 'Presenter disconnected' : payload.status === 'reconnecting' ? 'Reconnecting…' : payload.status === 'error' ? 'Captions interrupted' : 'Captions stopped'}</p> : <>
         {options.showEnglish && <p className="caption-english">{payload.english}</p>}

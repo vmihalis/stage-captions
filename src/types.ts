@@ -31,6 +31,7 @@ export interface OverlayPayload {
   partialJapanese?: string;
   status: 'idle' | 'live' | 'rehearsal' | 'reconnecting' | 'error' | 'stopped';
 }
+export interface OverlayState { open: boolean; visible: boolean; shortcutRegistered: boolean }
 declare global {
   interface Window {
     stageDesktop?: {
@@ -40,6 +41,9 @@ declare global {
       updateOverlay(payload: OverlayPayload): void;
       closeOverlay(): Promise<void>;
       onOverlayClosed(callback: () => void): () => void;
+      configureOverlay?(options: OverlayOptions): Promise<void>;
+      getOverlayState?(): Promise<OverlayState>;
+      onOverlayStateChanged?(callback: (state: OverlayState) => void): () => void;
     };
   }
 }

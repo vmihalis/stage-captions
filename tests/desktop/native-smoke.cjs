@@ -1,6 +1,6 @@
 // Run with: npx electron tests/desktop/native-smoke.cjs
 // Uses a loopback fixture and synthetic microphone; never contacts Soniox or records a real device.
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
@@ -54,30 +54,66 @@ async function smoke() {
   const displays = await main.webContents.executeJavaScript('window.stageDesktop.getDisplays()');
   assert.ok(displays.length > 0);
   const selected = displays[displays.length - 1];
-  testStage = 'opening the caption window';
-  await main.webContents.executeJavaScript(`window.stageDesktop.openOverlay(${JSON.stringify({ displayId: selected.id, fontSize: 48,
+  const toggle = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.accelerator === 'CommandOrControl+Shift+H');
+  assert.ok(toggle, 'The caption shortcut must have an application menu fallback.');
+  const initialState = await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()');
+  assert.deepEqual(initialState, { open: false, visible: false,
+    shortcutRegistered: globalShortcut.isRegistered('CommandOrControl+Shift+H') });
+  await main.webContents.executeJavaScript(`(() => {
+    window.overlayStates = [];
+    window.closedEvents = 0;
+    window.stopOverlayStates = window.stageDesktop.onOverlayStateChanged(state => window.overlayStates.push(state));
+    window.stageDesktop.onOverlayClosed(() => window.closedEvents++);
+  })()`);
+  const caption = { english: 'Welcome to our presentation.', japanese: '本日はプレゼンテーションにご参加いただき、',
+    partialJapanese: 'ありがとうございます。', status: 'rehearsal' };
+  testStage = 'caching captions and settings before the shortcut opens output';
+  await main.webContents.executeJavaScript(`window.stageDesktop.configureOverlay(${JSON.stringify({ displayId: selected.id, fontSize: 48,
     position: 'bottom', showEnglish: true, opacity: .88, clickThrough: true })})`);
+  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify(caption)})`);
+  assert.equal((await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()')).open, false);
+  assert.equal(BrowserWindow.getAllWindows().length, 1);
+  await assert.rejects(main.webContents.executeJavaScript('window.stageDesktop.configureOverlay({fontSize: -1})'));
+  toggle.click();
   testStage = 'loading the caption window';
   const overlay = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
+  await eventually(async () => (await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()')).visible);
   assert.equal(overlay.isAlwaysOnTop(), true);
   assert.equal(overlay.isResizable(), false);
   assert.equal(overlay.isMovable(), false);
   assert.equal(overlay.isFocusable(), false);
+  if (process.platform !== 'win32') assert.equal(overlay.isVisibleOnAllWorkspaces(), true);
+  if (process.platform === 'darwin') assert.equal(app.dock.isVisible(), true, 'Opening captions must preserve Stage in the Dock.');
   const preferences = main.webContents.getLastWebPreferences();
   assert.equal(preferences.sandbox, true);
   assert.equal(preferences.contextIsolation, true);
   assert.equal(preferences.nodeIntegration, false);
-  const caption = { english: 'Welcome to our presentation.', japanese: '本日はプレゼンテーションにご参加いただき、',
-    partialJapanese: 'ありがとうございます。', status: 'rehearsal' };
-  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify(caption)})`);
   testStage = 'displaying the caption payload';
   await eventually(async () => (await overlay.webContents.executeJavaScript('document.getElementById("partial").textContent')) === caption.partialJapanese);
   const exposed = await overlay.webContents.executeJavaScript('({ desktop: typeof window.stageDesktop, connection: typeof window.stageConnection, node: typeof require })');
   assert.deepEqual(exposed, { desktop: 'undefined', connection: 'undefined', node: 'undefined' });
   await overlay.webContents.executeJavaScript('document.fonts.ready.then(() => true)');
-  const sampleImage = await overlay.webContents.capturePage();
+  testStage = 'capturing the rendered overlay';
+  const sampleImage = await eventually(() => overlay.webContents.capturePage());
   const screenshot = path.join(temporary, 'overlay.png');
   await fs.writeFile(screenshot, sampleImage.toPNG());
+
+  testStage = 'hiding output without losing updated captions or settings';
+  toggle.click();
+  await eventually(async () => !(await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()')).visible);
+  assert.equal(overlay.isDestroyed(), false);
+  const hiddenBounds = overlay.getBounds();
+  await main.webContents.executeJavaScript('window.stageDesktop.configureOverlay({ fontSize:64, position:"top", showEnglish:true, opacity:.8, clickThrough:true })');
+  assert.notDeepEqual(overlay.getBounds(), hiddenBounds);
+  assert.equal((await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()')).visible, false,
+    'Changing caption settings must not reveal hidden output.');
+  const hiddenCaption = { ...caption, partialJapanese: '非表示中にも字幕を更新します。' };
+  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify(hiddenCaption)})`);
+  await eventually(async () => (await overlay.webContents.executeJavaScript('document.getElementById("partial").textContent')) === hiddenCaption.partialJapanese);
+  toggle.click();
+  await eventually(async () => (await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()')).visible);
+  assert.equal(overlay.isFocusable(), false);
+  assert.equal(BrowserWindow.getAllWindows().filter(window => window.getTitle() === 'Stage captions').length, 1);
 
   testStage = 'large captions showing the newest words';
   await main.webContents.executeJavaScript('window.stageDesktop.openOverlay({ fontSize:80, position:"bottom", showEnglish:true, opacity:.88, clickThrough:true })');
@@ -141,6 +177,26 @@ async function smoke() {
   testStage = 'closing the caption window';
   await eventually(() => overlay.isDestroyed());
   assert.equal(BrowserWindow.getAllWindows().length, 1);
+  await eventually(async () => (await main.webContents.executeJavaScript('window.closedEvents')) === 1);
+
+  testStage = 'reopening closed output with the latest cached captions';
+  const reopenedCaption = { english: 'These words arrived after closing the overlay.', japanese: '閉じた後の最新の字幕です。',
+    partialJapanese: '', status: 'live' };
+  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify(reopenedCaption)})`);
+  await main.webContents.executeJavaScript('window.stageDesktop.configureOverlay({ fontSize:48, position:"bottom", showEnglish:false, opacity:.8, clickThrough:true })');
+  toggle.click();
+  const reopened = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
+  await eventually(async () => (await reopened.webContents.executeJavaScript('document.getElementById("committed").textContent')) === reopenedCaption.japanese);
+  await eventually(async () => (await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()')).visible);
+  const states = await main.webContents.executeJavaScript('window.overlayStates');
+  assert.ok(states.some(state => state.open && state.visible));
+  assert.ok(states.some(state => state.open && !state.visible));
+  assert.ok(states.some(state => !state.open && !state.visible));
+  assert.ok(states.every(state => state.shortcutRegistered === initialState.shortcutRegistered));
+  await main.webContents.executeJavaScript('window.stopOverlayStates(); window.stageDesktop.closeOverlay()');
+  await eventually(() => reopened.isDestroyed());
+  assert.equal(await main.webContents.executeJavaScript('window.overlayStates.length'), states.length,
+    'The bridge must remove state subscriptions when asked.');
 
   const before = main.webContents.getURL();
   await main.webContents.executeJavaScript('window.location.href = "https://example.invalid"; true');
@@ -153,12 +209,18 @@ async function smoke() {
   const connection = await eventually(() => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/connection.html')));
   await eventually(() => connection.webContents.executeJavaScript('Boolean(window.stageConnection)'));
   assert.equal(main.isDestroyed(), true);
+  await toggle.click();
+  assert.equal(BrowserWindow.getAllWindows().filter(window => window.getTitle() === 'Stage captions').length, 0,
+    'The shortcut must not create output while setting up a team server.');
   const denied = await connection.webContents.executeJavaScript('window.stageConnection.connect("http://remote.example")');
   assert.equal(denied.ok, false);
   assert.equal(await connection.webContents.executeJavaScript('typeof window.stageDesktop'), 'undefined');
   console.log(JSON.stringify({ ok: true, platform: process.platform, displays: displays.length, selectedDisplay: selected.id,
+    shortcutRegistered: initialState.shortcutRegistered,
     bounds, syntheticMicrophone: media, screenshot, rollingScreenshot, checks: ['bridge', 'screen selection', 'overlay rendering',
       'newest words at 80px/1280px', 'inactive states clear stale captions',
+      'shortcut opens closed output', 'settings preserve hidden output', 'fresh captions after reopen',
+      'overlay lifecycle state and subscriptions', 'shortcut availability state',
       'renderer isolation', 'microphone-only permission', 'literal text', 'overlay teardown', 'external navigation denied', 'connection reset'] }));
   await finish(0);
 }

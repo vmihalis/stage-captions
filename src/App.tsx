@@ -4,7 +4,7 @@ import { api } from './lib/api';
 import { captionTail, japaneseWindow, parseTranslations } from './lib/captions';
 import { useCaptions } from './hooks/useCaptions';
 import JapaneseCaption from './JapaneseCaption';
-import type { Display, OverlayOptions, OverlayPayload, Session, Team } from './types';
+import type { Display, OverlayOptions, OverlayPayload, OverlayState, Session, Team } from './types';
 
 const emptyTeam: Team = { name: 'Team captions', glossary: { terms: [], translationTerms: [], background: '' } };
 const statusNames = { idle: 'Ready to present', connecting: 'Connecting', live: 'Live captions', rehearsal: 'Rehearsal', reconnecting: 'Reconnecting', stopping: 'Stopping', stopped: 'Session stopped', error: 'Session interrupted' };
@@ -31,6 +31,8 @@ export default function App() {
   const [micError, setMicError] = useState('');
   const [displays, setDisplays] = useState<Display[]>([]);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [shortcutRegistered, setShortcutRegistered] = useState<boolean | null>(null);
+  const [starting, setStarting] = useState(false);
   const [options, setOptions] = useState<OverlayOptions>({ fontSize: 42, position: 'bottom', showEnglish: false, opacity: 0.9, clickThrough: true });
   const [now, setNow] = useState(Date.now());
   const channelId = useRef(crypto.randomUUID());
@@ -41,16 +43,18 @@ export default function App() {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const live = useCaptions();
   const desktop = window.stageDesktop;
+  const shortcut = /Mac/i.test(navigator.platform) ? '⌘⇧H' : 'Ctrl+Shift+H';
   const isBusy = busyStates.includes(live.status);
   const authorized = session?.authenticated ?? false;
   const ready = authorized && session?.provider.configured;
   const interrupted = ['error', 'reconnecting', 'stopping', 'stopped'].includes(live.status);
   const elapsed = live.startedAt ? Math.max(0, (now - live.startedAt) / 1000) : 0;
   const outputPayload: OverlayPayload = {
-    english: captionTail(live.captions.english + live.captions.partialEnglish, 180),
-    ...japaneseWindow(live.captions.japanese, live.captions.partialJapanese),
+    english: captionTail(live.audienceCaptions.english + live.audienceCaptions.partialEnglish, 180),
+    ...japaneseWindow(live.audienceCaptions.japanese, live.audienceCaptions.partialJapanese),
     status: live.status === 'connecting' ? 'idle' : live.status === 'stopping' ? 'stopped' : live.status,
   };
+  const presenterEnglish = captionTail(live.captions.english + live.captions.partialEnglish, 500);
   const outputState = useRef({ payload: outputPayload, options });
   outputState.current = { payload: outputPayload, options };
 
@@ -85,15 +89,29 @@ export default function App() {
   useEffect(() => {
     const payload = outputState.current.payload;
     channel.current?.postMessage({ type: 'caption-state', payload, options });
-    if (overlayOpen && desktop) desktop.updateOverlay(payload);
-  }, [live.captions, live.status, options, overlayOpen, desktop]);
+    // Keep the native cache fresh even while hidden/closed so a global shortcut
+    // can restore current captions without waiting for another speech result.
+    if (desktop) desktop.updateOverlay(payload);
+  }, [live.audienceCaptions, live.status, options, overlayOpen, desktop]);
   useEffect(() => {
     if (!desktop) return;
     void desktop.getDisplays().then(setDisplays).catch(() => setNotice('Could not read displays. Reconnect your projector and try opening captions again.'));
-    return desktop.onOverlayClosed(() => setOverlayOpen(false));
+    let disposed = false;
+    const reflectState = (state: OverlayState) => {
+      if (disposed) return;
+      setOverlayOpen(state.visible);
+      setShortcutRegistered(state.shortcutRegistered);
+    };
+    const stopClosed = desktop.onOverlayClosed(() => setOverlayOpen(false));
+    const stopState = desktop.onOverlayStateChanged?.(reflectState);
+    void desktop.getOverlayState?.().then(reflectState).catch(() => setNotice('Could not check caption window visibility. Try showing captions again.'));
+    return () => { disposed = true; stopClosed(); stopState?.(); };
   }, [desktop]);
   useEffect(() => {
-    if (overlayOpen && desktop) void desktop.openOverlay(options).catch(() => setNotice('Could not update the caption window. Close it and try again.'));
+    if (!desktop) return;
+    const update = desktop.configureOverlay ? desktop.configureOverlay(options)
+      : overlayOpen ? desktop.openOverlay(options) : undefined;
+    void update?.catch(() => setNotice('Could not update the caption window. Close it and try again.'));
   }, [options, desktop, overlayOpen]);
 
   const loadDevices = useCallback(async () => {
@@ -145,12 +163,12 @@ export default function App() {
 
   const openOutput = async () => {
     setNotice('');
-    if (overlayOpen) {
-      if (desktop) await desktop.closeOverlay();
-      else outputWindow.current?.close();
-      setOverlayOpen(false); return;
-    }
     try {
+      if (overlayOpen) {
+        if (desktop) await desktop.closeOverlay();
+        else outputWindow.current?.close();
+        setOverlayOpen(false); return;
+      }
       if (desktop) {
         setDisplays(await desktop.getDisplays());
         await desktop.openOverlay(options);
@@ -161,6 +179,24 @@ export default function App() {
       }
       setOverlayOpen(true);
     } catch (error) { setNotice((error as Error).message); }
+  };
+
+  const startPresentation = async (rehearsal = false) => {
+    if (isBusy || starting) return;
+    if (!rehearsal && !authorized) { setConnectOpen(true); return; }
+    if (!rehearsal && !ready) { setTab('setup'); return; }
+    setStarting(true); setNotice(''); stopMicCheck();
+    try {
+      if (desktop) {
+        desktop.updateOverlay({ english: '', japanese: '', partialJapanese: '', status: 'idle' });
+        await desktop.openOverlay(options);
+        setOverlayOpen(true);
+      }
+      if (rehearsal) live.rehearse();
+      else live.start(deviceId);
+    } catch {
+      setNotice('Could not show captions on your screen. Try Show captions on screen before starting again.');
+    } finally { setStarting(false); }
   };
 
   const unlock = async (event: React.FormEvent) => {
@@ -193,7 +229,7 @@ export default function App() {
         <div className="page-heading"><div><h1>Live captions</h1><p>Your voice in English. Your audience follows in Japanese.</p></div><div className={`session-status ${live.status}`}><span className="status-dot" />{statusNames[live.status]}{isBusy && <span className="timer">{formatTime(elapsed)}</span>}</div></div>
         <div className="present-layout">
           <section className="preview-section" aria-label="Audience caption preview">
-            <div className="section-toolbar"><div><Monitor size={17} /><strong>Audience preview</strong></div><button className="text-button" onClick={openOutput}><ExternalLink size={15} />{overlayOpen ? 'Close caption window' : 'Open caption window'}</button></div>
+            <div className="section-toolbar"><div><Monitor size={17} /><strong>Audience preview</strong></div><span className="field-hint">{desktop ? overlayOpen ? 'On-screen captions shown' : 'On-screen captions hidden' : 'Presenter preview'}</span></div>
             <div className={`stage-preview ${options.position}`}>
               <div className="slide-placeholder" aria-hidden="true"><span className="slide-small-line" /><span className="slide-large-line" /><span className="slide-medium-line" /><div className="slide-chart"><span /><span /><span /><span /><span /></div><p>Your slides or live demo</p></div>
               <div className="preview-captions" style={{ backgroundColor: `oklch(0.12 0 0 / ${options.opacity})`, '--caption-size': `${Math.min(options.fontSize, 40)}px` } as React.CSSProperties}>
@@ -205,7 +241,7 @@ export default function App() {
               </div>
             </div>
             <div className="preview-footnote"><span><span className={`status-dot ${isBusy ? 'on' : ''}`} /> {live.status === 'rehearsal' ? 'Sample captions. No audio is recorded or sent.' : live.status === 'live' ? 'Microphone audio is being sent to Soniox.' : ['connecting', 'reconnecting'].includes(live.status) ? 'Microphone active. Connecting to the translation service…' : live.status === 'stopping' ? 'Ending the session and releasing the microphone…' : 'Your microphone is off unless you run a check.'}</span><button className="text-button" disabled={!outputPayload.english && !outputPayload.japanese && !outputPayload.partialJapanese} onClick={live.clear}>Clear captions</button></div>
-            <div className="transcript-section"><div className="transcript-label"><AudioLines size={17} /> English recognition <span>Presenter view only</span></div><p className={outputPayload.english ? '' : 'muted'}>{outputPayload.english || 'Recognized speech will appear here once the session starts.'}</p></div>
+            <div className="transcript-section"><div className="transcript-label"><AudioLines size={17} /> English recognition <span>Presenter view only</span></div><p className={presenterEnglish ? '' : 'muted'}>{presenterEnglish || 'Recognized speech will appear here once the session starts.'}</p></div>
             {(live.error || micError) && <div className="notice error" role="alert">{live.error || micError}</div>}
             {live.muted && <div className="notice" role="alert">Your microphone is muted by the system or device.</div>}
             {live.status === 'live' && live.lastUpdate && now - live.lastUpdate > 20000 && <div className="notice" role="status">No new words recently. If you are speaking, check the microphone and connection.</div>}
@@ -219,19 +255,22 @@ export default function App() {
             <div className="control-separator" />
             <label className="field-label" htmlFor="display">Caption output</label>
             {desktop ? <select id="display" value={options.displayId ?? ''} onFocus={() => void desktop.getDisplays().then(setDisplays)} onChange={event => setOptions({ ...options, displayId: event.target.value || undefined })}><option value="">Primary display</option>{displays.map(display => <option key={display.id} value={display.id}>{display.label} · {display.width} × {display.height}</option>)}</select> : <div className="browser-output"><Monitor size={18} /><div><strong>Separate browser window</strong><span>Use the desktop app to float captions over slides.</span></div></div>}
+            <button className="button secondary full" onClick={() => void openOutput()} aria-pressed={overlayOpen}><ExternalLink size={17} />{overlayOpen ? 'Hide captions' : desktop ? 'Show captions on screen' : 'Open caption window'}</button>
+            {desktop && <p className="field-hint">{shortcutRegistered === false ? 'Shortcut unavailable: another app may be using it. Use this button' : `${shortcut} · ${shortcutRegistered === null ? 'hide/show an open caption window' : 'show/hide captions'}`}. Hiding keeps the microphone on.</p>}
+            <p className="field-hint">Old captions clear after 6 seconds without new words. Listening continues.</p>
             <div className="field-pair"><div><label className="field-label" htmlFor="position">Position</label><select id="position" value={options.position} onChange={event => setOptions({ ...options, position: event.target.value as 'top' | 'bottom' })}><option value="bottom">Bottom</option><option value="top">Top</option></select></div><div><label className="field-label" htmlFor="font-size">Text size</label><select id="font-size" value={options.fontSize} onChange={event => setOptions({ ...options, fontSize: Number(event.target.value) })}>{[28, 34, 42, 52, 64, 80].map(size => <option key={size} value={size}>{size} px</option>)}</select></div></div>
             <label className="check-label"><input type="checkbox" checked={options.showEnglish} onChange={event => setOptions({ ...options, showEnglish: event.target.checked })} /><span>Also show English</span></label>
             <label className="range-label" htmlFor="opacity"><span>Background opacity</span><output>{Math.round(options.opacity * 100)}%</output></label><input id="opacity" type="range" min="0.4" max="1" step="0.05" value={options.opacity} onChange={event => setOptions({ ...options, opacity: Number(event.target.value) })} />
             <div className="control-separator" />
-            {isBusy ? <button className="button stop full" disabled={live.status === 'stopping'} onClick={() => void live.stop()}><CircleStop size={18} />{live.status === 'stopping' ? 'Stopping…' : live.status === 'rehearsal' ? 'Stop rehearsal' : 'Stop captions'}</button> : <button className="button primary full" onClick={() => { if (!authorized) { setConnectOpen(true); return; } if (!ready) { setTab('setup'); return; } stopMicCheck(); live.start(deviceId); }}><Mic size={18} />{!authorized ? 'Connect team to go live' : !ready ? 'Finish live setup' : 'Start captions'}</button>}
-            <button className="button secondary full" disabled={isBusy} onClick={() => { stopMicCheck(); live.rehearse(); }}><Play size={16} /> Run a rehearsal</button>
+            {isBusy ? <button className="button stop full" disabled={live.status === 'stopping'} onClick={() => void live.stop()}><CircleStop size={18} />{live.status === 'stopping' ? 'Stopping…' : live.status === 'rehearsal' ? 'Stop rehearsal' : 'Stop captions'}</button> : <button className="button primary full" disabled={starting} onClick={() => void startPresentation()}><Mic size={18} />{starting ? 'Preparing captions…' : !authorized ? 'Connect team to go live' : !ready ? 'Finish live setup' : 'Start captions'}</button>}
+            <button className="button secondary full" disabled={isBusy || starting} onClick={() => void startPresentation(true)}><Play size={16} /> Run a rehearsal</button>
             <p className="control-note">{ready ? 'Live translation uses your team’s Soniox account.' : 'Rehearsal works without an account or microphone.'}</p>
           </aside>
         </div>
         <div className="presentation-tip"><Volume2 size={18} /><p>A headset or presenter microphone gives the clearest captions. Do a short rehearsal on the actual projected screen.</p><button className="text-button" onClick={() => setTab('setup')}>Setup guide <ChevronRight size={16} /></button></div>
       </>}
       {tab === 'vocabulary' && <Vocabulary team={team} authenticated={authorized} onConnect={() => setConnectOpen(true)} onSaved={setTeam} />}
-      {tab === 'setup' && <SetupGuide session={session} desktop={!!desktop} onConnect={() => setConnectOpen(true)} onRehearse={() => { setTab('present'); stopMicCheck(); live.rehearse(); }} />}
+      {tab === 'setup' && <SetupGuide session={session} desktop={!!desktop} onConnect={() => setConnectOpen(true)} onRehearse={() => { setTab('present'); void startPresentation(true); }} />}
       <footer><span>Stage <span className="footer-dot">·</span> English → Japanese</span><span>{session?.provider.configured ? `Soniox · ${session.provider.region === 'jp' ? 'Japan' : session.provider.region === 'eu' ? 'Europe' : 'Global'} region` : 'Live translation not connected'} <span className="footer-dot">·</span> Captions stay in this session</span></footer>
     </div>
     <dialog ref={dialogRef} className="connect-dialog" onCancel={() => { setConnectOpen(false); setAccessCode(''); }} onClose={() => setConnectOpen(false)}><form onSubmit={unlock}><div className="dialog-heading"><span className="brand-mark"><KeyRound size={22} /></span><button type="button" className="icon-button" onClick={() => { setConnectOpen(false); setAccessCode(''); }} aria-label="Close team connection"><X size={20} /></button></div><h2>Connect your team</h2><p>Enter the shared access code from your organizer. This laptop will stay connected for seven days.</p><label className="field-label" htmlFor="team-code">Team access code</label><input autoFocus id="team-code" type="password" autoComplete="off" required maxLength={256} value={accessCode} onChange={event => setAccessCode(event.target.value)} placeholder="Enter your team code" />{connectError && <p className="form-error" role="alert">{connectError}</p>}<button className="button primary full" disabled={connecting}>{connecting ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{connecting ? 'Connecting…' : 'Connect team'}</button><p className="dialog-footnote">No individual account needed. Your organizer manages the translation account.</p></form></dialog>
@@ -270,7 +309,7 @@ function SetupGuide({ session, desktop, onConnect, onRehearse }: { session: Sess
   return <section className="settings-page"><div className="page-heading"><div><h1>Ready for the room</h1><p>A short check before your first presentation.</p></div><Settings2 className="heading-icon" size={28} /></div>
     <ol className="setup-steps"><li><span className="step-number">1</span><div><h2>Connect this laptop</h2><p>Your organizer shares the app, a team server address, and one access code. Enter the code once. It is remembered on this laptop for seven days.</p>{session?.authenticated ? <span className="inline-success"><Check size={16} /> Team connected</span> : <button className="button secondary small" onClick={onConnect}><KeyRound size={15} /> Enter team code</button>}</div></li>
       <li><span className="step-number">2</span><div><h2>Choose your microphone and screen</h2><p>Select your headset or presenter microphone. In the desktop app, choose the projected display under Caption output. The caption window floats above your slides and live demos.</p><p className="setup-detail">{desktop ? 'Use Cmd/Ctrl + Shift + H to hide or show the native caption window.' : 'You are in the browser preview. It can open a separate caption page; floating over other applications requires the desktop app.'}</p></div></li>
-      <li><span className="step-number">3</span><div><h2>Rehearse on the projector</h2><p>Open the caption window and run a rehearsal. Check that the back row can read it, then switch between your slides, browser, and demo. Rehearsal uses sample text and keeps your microphone off.</p><button className="button secondary small" onClick={onRehearse}><Play size={15} /> Run a rehearsal</button></div></li>
+      <li><span className="step-number">3</span><div><h2>Rehearse on the projector</h2><p>Run a rehearsal to open captions automatically in the desktop app. Check that the back row can read them, then switch between your slides, browser, and demo. Rehearsal uses sample text and keeps your microphone off.</p><button className="button secondary small" onClick={onRehearse}><Play size={15} /> Run a rehearsal</button></div></li>
       <li><span className="step-number">4</span><div><h2>Start captions when you are ready</h2><p>Live mode sends microphone audio to Soniox over the internet. English speech returns as Japanese captions. Early wording may change as the translation settles. Stop captions when you finish.</p></div></li></ol>
     <div className="organizer-note"><Globe2 size={22} /><div><h2>For the organizer</h2><p>{session?.provider.configured ? 'The translation service is configured. Use a real speaker rehearsal to check accent accuracy and delay before the event.' : 'The server needs a Soniox API key before live translation can start. Set SONIOX_API_KEY and SONIOX_REGION on the server, then restart it. Presenters never enter this key.'}</p><p>Publish the team server over HTTPS, and distribute an installer for each operating system. Japan-region processing requires an enabled Soniox regional project. Audio and transcripts are not saved by this app.</p></div></div>
   </section>;

@@ -3,12 +3,15 @@ import { MicrophoneSource, SonioxClient } from '@soniox/client';
 import type { Recording, TranscriptionContext } from '@soniox/client';
 import { api } from '../lib/api';
 import { accumulate, emptyCaptions, rehearsalLines } from '../lib/captions';
+import { advanceAudienceCaptions, clearAudienceCaptions, emptyAudienceCaptions, expireAudienceCaptions } from '../lib/audience-captions';
 import type { Captions, CaptionStatus } from '../types';
 
 interface TokenResponse { apiKey: string; websocketUrl: string; model: string; context: TranscriptionContext }
 
 export function useCaptions() {
   const [captions, setCaptions] = useState<Captions>(emptyCaptions);
+  const [audienceCaptions, setAudienceCaptions] = useState<Captions>(emptyCaptions);
+  const audience = useRef(emptyAudienceCaptions());
   const [status, setStatus] = useState<CaptionStatus>('idle');
   const [error, setError] = useState('');
   const [muted, setMuted] = useState(false);
@@ -17,6 +20,22 @@ export function useCaptions() {
   const recording = useRef<Recording | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const generation = useRef(0);
+
+  const resetAudience = useCallback(() => {
+    audience.current = emptyAudienceCaptions();
+    setAudienceCaptions(audience.current.captions);
+  }, []);
+
+  useEffect(() => {
+    if (status !== 'live') return;
+    const expiryTimer = setInterval(() => {
+      const next = expireAudienceCaptions(audience.current, Date.now());
+      if (next === audience.current) return;
+      audience.current = next;
+      setAudienceCaptions(next.captions);
+    }, 250);
+    return () => clearInterval(expiryTimer);
+  }, [status]);
 
   const cancel = useCallback(() => {
     generation.current++;
@@ -50,7 +69,7 @@ export function useCaptions() {
   const start = useCallback((deviceId: string) => {
     cancel();
     const current = generation.current;
-    setCaptions(emptyCaptions()); setError(''); setStatus('connecting');
+    setCaptions(emptyCaptions()); resetAudience(); setError(''); setStatus('connecting');
     setStartedAt(null); setLastUpdate(null); setMuted(false);
     const client = new SonioxClient({
       config: async () => {
@@ -92,12 +111,15 @@ export function useCaptions() {
     active.on('result', result => {
       if (!valid()) return;
       setCaptions(previous => accumulate(previous, result.tokens));
-      if (result.tokens.length) setLastUpdate(Date.now());
+      const next = advanceAudienceCaptions(audience.current, result.tokens, Date.now());
+      if (next.lastActivityAt !== null && next.lastActivityAt !== audience.current.lastActivityAt) setLastUpdate(next.lastActivityAt);
+      audience.current = next;
+      setAudienceCaptions(next.captions);
     });
     active.on('connected', () => { if (valid()) { setStatus('live'); setStartedAt(value => value ?? Date.now()); } });
-    active.on('reconnecting', () => { if (valid()) { setStatus('reconnecting'); setCaptions(emptyCaptions()); } });
+    active.on('reconnecting', () => { if (valid()) { setStatus('reconnecting'); setCaptions(emptyCaptions()); resetAudience(); } });
     active.on('reconnected', () => { if (valid()) setStatus('live'); });
-    active.on('session_restart', () => { if (valid()) setCaptions(emptyCaptions()); });
+    active.on('session_restart', () => { if (valid()) { setCaptions(emptyCaptions()); resetAudience(); } });
     active.on('source_muted', () => { if (valid()) setMuted(true); });
     active.on('source_unmuted', () => { if (valid()) setMuted(false); });
     active.on('state_change', ({ new_state }) => {
@@ -107,7 +129,7 @@ export function useCaptions() {
     active.on('error', failure => {
       if (!valid()) return;
       generation.current++;
-      setStatus('error'); setCaptions(emptyCaptions());
+      setStatus('error'); setCaptions(emptyCaptions()); resetAudience();
       const code = 'code' in failure ? String(failure.code) : '';
       if (/permission|denied/i.test(code + failure.name)) setError('Microphone access was denied. Allow it in your system or browser settings, then try again.');
       else if (/device|unavailable/i.test(code + failure.name)) setError('The selected microphone is unavailable. Choose a connected microphone and try again.');
@@ -116,10 +138,10 @@ export function useCaptions() {
       active.cancel();
       recording.current = null;
     });
-  }, [cancel]);
+  }, [cancel, resetAudience]);
 
   const rehearse = useCallback(() => {
-    cancel(); setError(''); setMuted(false); setCaptions(emptyCaptions());
+    cancel(); setError(''); setMuted(false); setCaptions(emptyCaptions()); resetAudience();
     setStatus('rehearsal'); setStartedAt(Date.now()); setLastUpdate(null);
     let tick = 0;
     const update = () => {
@@ -127,11 +149,18 @@ export function useCaptions() {
       const progress = Math.min((tick % 50) / 27, 1);
       const line = rehearsalLines[index];
       const partial = Array.from(line.ja).slice(0, Math.max(1, Math.ceil(Array.from(line.ja).length * progress))).join('');
-      setCaptions({ english: line.en, partialEnglish: '', japanese: progress === 1 ? line.ja : '', partialJapanese: progress < 1 ? partial : '' });
+      const sample = { english: line.en, partialEnglish: '', japanese: progress === 1 ? line.ja : '', partialJapanese: progress < 1 ? partial : '' };
+      setCaptions(sample); setAudienceCaptions(sample);
       setLastUpdate(Date.now()); tick++;
     };
     update(); timer.current = setInterval(update, 100);
-  }, [cancel]);
+  }, [cancel, resetAudience]);
 
-  return { captions, status, error, muted, startedAt, lastUpdate, start, stop, rehearse, clear: () => setCaptions(emptyCaptions()) };
+  const clear = useCallback(() => {
+    setCaptions(emptyCaptions());
+    audience.current = clearAudienceCaptions(audience.current);
+    setAudienceCaptions(audience.current.captions);
+  }, []);
+
+  return { captions, audienceCaptions, status, error, muted, startedAt, lastUpdate, start, stop, rehearse, clear };
 }
