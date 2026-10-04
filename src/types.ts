@@ -1,9 +1,11 @@
 export type CaptionStatus = 'idle' | 'connecting' | 'live' | 'rehearsal' | 'reconnecting' | 'error' | 'stopped' | 'stopping';
+export type CaptionLanguage = 'en' | 'ja';
 export interface Captions {
-  english: string;
-  japanese: string;
-  partialEnglish: string;
-  partialJapanese: string;
+  source: string;
+  translation: string;
+  partialSource: string;
+  partialTranslation: string;
+  translationLanguage: CaptionLanguage;
 }
 export interface Glossary {
   terms: string[];
@@ -26,9 +28,12 @@ export interface OverlayOptions {
   clickThrough: boolean;
 }
 export interface OverlayPayload {
+  // Compatibility names for installed desktop shells: spoken text and
+  // primary translation, regardless of the languages used in the session.
   english: string;
   japanese: string;
   partialJapanese?: string;
+  translationLanguage?: CaptionLanguage;
   status: 'idle' | 'live' | 'rehearsal' | 'reconnecting' | 'error' | 'stopped';
 }
 export interface OverlayState { open: boolean; visible: boolean; shortcutRegistered: boolean }

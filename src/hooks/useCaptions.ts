@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { MicrophoneSource, SonioxClient } from '@soniox/client';
 import type { Recording, TranscriptionContext } from '@soniox/client';
 import { api } from '../lib/api';
-import { speechConfig } from '../lib/speech-config';
-import type { CaptionPace } from '../lib/speech-config';
+import { fallbackTranslationLanguage, speechConfig } from '../lib/speech-config';
+import type { CaptionPace, TranslationMode } from '../lib/speech-config';
 import { accumulate, emptyCaptions, rehearsalLines } from '../lib/captions';
 import { advanceAudienceCaptions, clearAudienceCaptions, emptyAudienceCaptions, expireAudienceCaptions } from '../lib/audience-captions';
 import type { Captions, CaptionStatus } from '../types';
@@ -68,10 +68,15 @@ export function useCaptions() {
     finally { clearTimeout(timeout); cancel(); setStatus('stopped'); setMuted(false); }
   }, [cancel]);
 
-  const start = useCallback((deviceId: string, pace: CaptionPace = 'responsive') => {
+  const start = useCallback((deviceId: string, pace: CaptionPace = 'responsive', mode: TranslationMode = 'en_to_ja') => {
     cancel();
     const current = generation.current;
-    setCaptions(emptyCaptions()); resetAudience(); setError(''); setStatus('connecting');
+    const fallbackLanguage = fallbackTranslationLanguage(mode);
+    const initialLanguage = fallbackLanguage ?? 'ja';
+    setCaptions(emptyCaptions(initialLanguage));
+    audience.current = emptyAudienceCaptions(initialLanguage);
+    setAudienceCaptions(audience.current.captions);
+    setError(''); setStatus('connecting');
     setStartedAt(null); setLastUpdate(null); setMuted(false);
     const client = new SonioxClient({
       config: async () => {
@@ -94,7 +99,7 @@ export function useCaptions() {
     const active = client.realtime.record({
       model: 'stt-rt-v5',
       source,
-      session_config: resolved => speechConfig(resolved.stt_defaults, pace),
+      session_config: resolved => speechConfig(resolved.stt_defaults, pace, mode),
       auto_reconnect: true,
       max_reconnect_attempts: 3,
       reconnect_base_delay_ms: 800,
@@ -106,8 +111,8 @@ export function useCaptions() {
     const valid = () => current === generation.current;
     active.on('result', result => {
       if (!valid()) return;
-      setCaptions(previous => accumulate(previous, result.tokens));
-      const next = advanceAudienceCaptions(audience.current, result.tokens, Date.now());
+      setCaptions(previous => accumulate(previous, result.tokens, fallbackLanguage));
+      const next = advanceAudienceCaptions(audience.current, result.tokens, Date.now(), fallbackLanguage);
       if (next.lastActivityAt !== null && next.lastActivityAt !== audience.current.lastActivityAt) setLastUpdate(next.lastActivityAt);
       audience.current = next;
       setAudienceCaptions(next.captions);
@@ -136,7 +141,7 @@ export function useCaptions() {
     });
   }, [cancel, resetAudience]);
 
-  const rehearse = useCallback(() => {
+  const rehearse = useCallback((mode: TranslationMode = 'en_to_ja') => {
     cancel(); setError(''); setMuted(false); setCaptions(emptyCaptions()); resetAudience();
     setStatus('rehearsal'); setStartedAt(Date.now()); setLastUpdate(null);
     let tick = 0;
@@ -144,8 +149,14 @@ export function useCaptions() {
       const index = Math.floor(tick / 50) % rehearsalLines.length;
       const progress = Math.min((tick % 50) / 27, 1);
       const line = rehearsalLines[index];
-      const partial = Array.from(line.ja).slice(0, Math.max(1, Math.ceil(Array.from(line.ja).length * progress))).join('');
-      const sample = { english: line.en, partialEnglish: '', japanese: progress === 1 ? line.ja : '', partialJapanese: progress < 1 ? partial : '' };
+      const reverse = mode === 'ja_to_en' || (mode === 'auto' && index % 2 === 1);
+      const translation = reverse ? line.en : line.ja;
+      const partial = Array.from(translation).slice(0, Math.max(1, Math.ceil(Array.from(translation).length * progress))).join('');
+      const sample: Captions = {
+        source: reverse ? line.ja : line.en, partialSource: '',
+        translation: progress === 1 ? translation : '', partialTranslation: progress < 1 ? partial : '',
+        translationLanguage: reverse ? 'en' : 'ja',
+      };
       setCaptions(sample); setAudienceCaptions(sample);
       setLastUpdate(Date.now()); tick++;
     };

@@ -49,6 +49,10 @@ function normalizeCaptionPayload(value) {
     if (typeof content !== 'string' || content.length > 6000) throw new Error('Caption update is too long.');
     strings[key] = content;
   }
+  if (value.translationLanguage !== undefined) {
+    if (!['en', 'ja'].includes(value.translationLanguage)) throw new Error('Invalid caption language.');
+    strings.translationLanguage = value.translationLanguage;
+  }
   return { ...strings, status: value.status };
 }
 
@@ -60,7 +64,7 @@ function chooseDisplay(displays, primaryId, requestedId) {
 function overlayBounds(workArea, options) {
   const margin = Math.min(24, Math.floor(workArea.width * 0.02), Math.floor(workArea.height * 0.04));
   const width = Math.max(1, workArea.width - margin * 2);
-  // Two Japanese lines, optional English, padding, and a readable rehearsal/status badge.
+  // Two translation lines, optional spoken text, padding, and a readable status badge.
   const desiredHeight = Math.ceil(options.fontSize * 2.9 + (options.showEnglish ? options.fontSize * 0.8 : 0) + 96);
   const height = Math.max(1, Math.min(workArea.height - margin * 2, desiredHeight));
   return { x: Math.round(workArea.x + margin), y: Math.round(options.position === 'top'

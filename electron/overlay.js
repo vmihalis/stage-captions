@@ -29,6 +29,7 @@ document.fonts.ready.then(showNewestWords);
 document.fonts.addEventListener('loadingdone', showNewestWords);
 
 window.stageCaptions.onUpdate(({ options, captions }) => {
+  japanese.lang = captions.translationLanguage || 'ja';
   const fontSize = `${options.fontSize}px`;
   let geometryChanged = document.documentElement.style.getPropertyValue('--caption-size') !== fontSize;
   document.documentElement.style.setProperty('--caption-size', fontSize);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Maximize, X } from 'lucide-react';
 import type { OverlayOptions, OverlayPayload } from './types';
-import JapaneseCaption from './JapaneseCaption';
+import CaptionText from './CaptionText';
 
 export default function CaptionWindow() {
   const [payload, setPayload] = useState<OverlayPayload>({ english: '', japanese: '', status: 'idle' });
@@ -35,8 +35,8 @@ export default function CaptionWindow() {
     <div className="output-caption" hidden={quiet} style={{ backgroundColor: `oklch(0.14 0 0 / ${options.opacity})` }}>
       {payload.status === 'rehearsal' && <span className="rehearsal-label">Rehearsal · Sample text · Microphone off</span>}
       {inactive ? <p className="output-state">{offline ? 'Presenter disconnected' : payload.status === 'reconnecting' ? 'Reconnecting…' : payload.status === 'error' ? 'Captions interrupted' : 'Captions stopped'}</p> : <>
-        {options.showEnglish && <p className="caption-english">{payload.english}</p>}
-        <JapaneseCaption final={payload.japanese} partial={payload.partialJapanese} />
+        {options.showEnglish && <p className="caption-source">{payload.english}</p>}
+        <CaptionText final={payload.japanese} partial={payload.partialJapanese} language={payload.translationLanguage} />
         {!payload.japanese && !payload.partialJapanese && <p className="output-state">Waiting for captions</p>}
       </>}
     </div>

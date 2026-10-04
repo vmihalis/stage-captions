@@ -72,3 +72,13 @@ test('caption payloads preserve literal text, accept provisional Japanese and re
   assert.throws(() => normalizeCaptionPayload({ ...caption, japanese: 'あ'.repeat(6001) }));
   assert.throws(() => normalizeCaptionPayload({ ...caption, english: { html: 'bad' } }));
 });
+
+test('caption metadata supports both target languages while preserving legacy payloads', () => {
+  const caption = { english: 'GitHubを使います。', japanese: 'We use GitHub.', partialJapanese: '',
+    translationLanguage: 'en', status: 'live' };
+  assert.deepEqual(normalizeCaptionPayload(caption), caption);
+  assert.deepEqual(normalizeCaptionPayload({ ...caption, translationLanguage: 'ja' }), { ...caption, translationLanguage: 'ja' });
+  for (const language of ['fr', '', null, {}]) {
+    assert.throws(() => normalizeCaptionPayload({ ...caption, translationLanguage: language }));
+  }
+});

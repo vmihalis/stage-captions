@@ -1,6 +1,10 @@
 # Stage
 
-Live English → Japanese subtitles for presentations. The desktop app places a caption overlay above your slides, browser, and other apps on the screen you choose.
+Live English ↔ Japanese subtitles for presentations. The desktop app places a caption overlay above your slides, browser, and other apps on the screen you choose.
+
+This local preview branch adds automatic two-way translation and caption pacing. These changes have not been deployed to the team server or included in the published v0.1.3 installers.
+
+The local preview also compares a floating overlay with a reserved top/bottom caption strip using a fitted sample slide. It does not capture screens or resize apps. For a real reserved-space output, an extended projector can show a Stage presentation window while the presenter operates the original apps on the laptop. Mirroring the same screen requires windowed apps with space left for captions; arbitrary fullscreen apps cannot be forced to leave a strip through a portable Electron setting. See [Electron displays](https://www.electronjs.org/docs/latest/api/structures/display) and [Windows fullscreen appbar behavior](https://learn.microsoft.com/en-us/windows/win32/shell/abn-fullscreenapp). Screen capture and its platform-specific permission flow remain separate work.
 
 **[Download the latest release](https://github.com/vmihalis/stage-captions/releases/latest)** · [All releases](https://github.com/vmihalis/stage-captions/releases) · [Host a team server](deploy/README.md)
 
@@ -13,11 +17,15 @@ Your organizer provides a **team server address** and a **shared team access cod
 3. Choose **Connect team** and enter the shared access code.
 4. Select your microphone, choose **Check mic**, and allow microphone access when prompted. This short microphone check stays on your computer.
 5. Under **Caption output**, select the display connected to the projector. Adjust text size and position.
-6. Choose **Start captions**. The overlay opens automatically. Speak English and switch to your presentation.
+6. Choose **Translation** before starting: **Automatic · English ↔ Japanese**, or a fixed direction. Choose **Start captions**. The overlay opens automatically. Switch to your presentation.
 
 Try **Run a rehearsal** first to check placement without using a microphone or translation account. Then rehearse with a real speaker and the actual projector to check accuracy and delay.
 
-Choose **Caption pace** before starting live captions. **Responsive** uses Soniox's recommended lower-latency endpoint settings on the v5 model; **More context** keeps the original semantic endpoint timing for speakers who pause mid-sentence. Both display draft Japanese as soon as it arrives. Earlier finalization can split phrases and affect recognition accuracy, so compare the two with your presenters. The endpoint delay limits time after a speech boundary; it does not guarantee a translation every 1.5 seconds. See [Soniox's endpoint tuning guidance](https://soniox.com/docs/stt/rt/endpoint-detection).
+Automatic mode uses one Soniox two-way session with English and Japanese language hints. Spoken text stays separate from the translation, and an English word inside Japanese speech does not restart or reconfigure the session. The primary caption follows the provider's translation language; a language change starts a fresh translated segment. Soniox's language identification aims for sentence-level coherence, but short phrases and provisional language labels can be misidentified. Choose a fixed direction if this happens during rehearsal. See [language identification](https://soniox.com/docs/stt/concepts/language-identification) and [two-way translation](https://soniox.com/docs/translation/stt-translation).
+
+For names or technical terms that should stay unchanged, add preferred translations such as `GitHub = GitHub` or `API = API` in **Team vocabulary**. Other pairs can use either direction; add the reverse pair separately when needed. Preferences guide the provider and cannot guarantee exact spelling or preservation. Stage displays the returned text without guessing language from Latin characters or applying word replacements.
+
+Choose **Caption pace** before starting live captions. **Responsive** uses Soniox's recommended lower-latency endpoint settings on the v5 model; **More context** keeps the original semantic endpoint timing for speakers who pause mid-sentence. Both display draft translations as soon as they arrive. Earlier finalization can split phrases and affect recognition accuracy, so compare the two with your presenters. The endpoint delay limits time after a speech boundary; it does not guarantee a translation every 1.5 seconds. See [Soniox's endpoint tuning guidance](https://soniox.com/docs/stt/rt/endpoint-detection).
 
 The overlay lets clicks pass through to the app underneath. **Cmd+Shift+H** on Mac or **Ctrl+Shift+H** on Windows/Linux opens, hides, or shows captions. The **Show captions on screen / Hide captions** button does the same. Old text clears after six seconds without new recognized words or translation updates; late translations get a fresh reading window. Hiding keeps listening; choose **Stop captions** to stop translation. Closing Stage also ends capture.
 
