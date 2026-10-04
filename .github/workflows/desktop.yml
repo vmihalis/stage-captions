@@ -83,8 +83,22 @@ jobs:
       - run: npm ci
       - run: npm run check
         timeout-minutes: 5
-      - name: Package unsigned pilot installer
+      - name: Package pilot installer
         run: npm run package:desktop -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Verify Mac app, DMG, and ZIP integrity
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_ARCH" == ARM64 ]]; then
+            app_directory=release/mac-arm64
+          else
+            app_directory=release/mac
+          fi
+          stage_version="$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')"
+          node tests/desktop/mac-distribution-check.mjs \
+            "$app_directory/Stage.app" \
+            "release/Stage-$stage_version-mac-${{ matrix.arch }}.dmg" \
+            "release/Stage-$stage_version-mac-${{ matrix.arch }}.zip"
       - name: Verify packaged Mac first launch
         if: runner.os == 'macOS'
         shell: bash
@@ -162,7 +176,7 @@ jobs:
           - Windows x64: win-x64.exe
           - Linux x64: linux-x86_64.AppImage or linux-amd64.deb
 
-          These pilot packages are unsigned. The macOS packages are not notarized, so macOS and Windows may show security warnings. Windows ARM and Linux ARM installers are not included.
+          Mac pilot apps use ad-hoc signatures for integrity. They do not have Apple Developer ID signatures and are not notarized, so macOS may block them pending explicit approval. Windows installers are unsigned and may also show security warnings. Windows ARM and Linux ARM installers are not included.
 
           On first launch, enter the HTTPS server address and shared team access code supplied by your organizer. No team credentials or Soniox API key are included in the installers. Microphone audio is sent directly to Soniox when you start live captions.
 

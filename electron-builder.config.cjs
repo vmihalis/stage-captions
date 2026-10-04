@@ -12,9 +12,11 @@ module.exports = {
   mac: {
     category: 'public.app-category.productivity',
     target: ['dmg', 'zip'],
-    // Pilot packages have no Apple Developer signing identity or notarization credentials.
-    identity: null,
+    // Seal the complete pilot bundle; null leaves Electron's stale linker signature behind.
+    // Ad-hoc signing provides integrity, not Apple Developer ID or Gatekeeper trust.
+    identity: '-',
     notarize: false,
+    strictVerify: true,
     hardenedRuntime: true,
     entitlements: 'electron/entitlements.mac.plist',
     entitlementsInherit: 'electron/entitlements.mac.plist',
