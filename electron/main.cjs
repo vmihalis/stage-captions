@@ -7,7 +7,8 @@ const { normalizeServerOrigin, matchesOrigin, normalizeOverlayOptions, normalize
 
 const { createPresentation } = require('./presentation.cjs');
 const { createSummaryRunner } = require('./summary.cjs');
-const summaryRunner = createSummaryRunner();
+const { summaryEnvironment } = require('./summary-config.cjs');
+let summaryRunner = createSummaryRunner();
 
 const localURL = file => pathToFileURL(path.join(__dirname, file)).href;
 let mainWindow;
@@ -346,6 +347,7 @@ async function savedOrigin() {
 }
 
 app.whenReady().then(async () => {
+  summaryRunner = createSummaryRunner({ env: await summaryEnvironment(app.getPath('userData')) });
   denyPermissions('stage-overlay');
   denyPermissions('stage-connection');
   presentation = createPresentation({ BrowserWindow, desktopCapturer, screen, session, ipcMain,

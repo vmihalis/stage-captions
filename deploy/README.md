@@ -1,6 +1,6 @@
 # Host a Stage team server
 
-Presenters install the desktop app and connect to a shared HTTPS server. Only the organizer configures Soniox. The server serves the app, authenticates the shared code, stores vocabulary, and issues temporary speech credentials. Audio streams directly from the presenter's computer to Soniox.
+Presenters install the desktop app and connect to a shared HTTPS server. Only the organizer configures Soniox. The server serves the app, authenticates the shared code, stores vocabulary and complete finalized meeting transcripts, and issues temporary speech credentials. Audio streams directly from the presenter's computer to Soniox.
 
 ## Docker Compose
 
@@ -46,12 +46,13 @@ Give presenters the [latest release](https://github.com/vmihalis/stage-captions/
 
 ## Operations
 
-The named `stage-data` volume holds a SQLite database containing shared vocabulary and hashed login sessions. Back it up before replacing or migrating the host. Stage does not persist audio or transcripts. Protect `.env.production` separately as a credential file.
+The named `stage-data` volume holds a SQLite database containing shared vocabulary, hashed login sessions, meetings, finalized source/translation entries, and bookmarks. Back it up before replacing or migrating the host. Stage does not persist microphone audio. Meeting transcripts are shared with everyone holding the team code; protect backups as team data. Protect `.env.production` separately as a credential file.
 
-For a v0.1.4 server upgrade, preserve the existing `.env.production`, Compose project, data volume, and previous image for rollback. Take a consistent SQLite backup; do not copy only the database file while it has active WAL writes. Build the frontend with `VITE_STAGE_PREVIEW=false`, then rebuild and recreate the Stage container. This is a build-time setting: changing the running container's environment cannot change the compiled UI. The reserved-space sample is a local preview only; screen capture and app resizing are not release features.
+For a v0.1.5 upgrade, preserve the existing `.env.production`, Compose project, data volume, and previous image for rollback. Take a consistent SQLite backup; do not copy only the database file while it has active WAL writes. The meeting schema is additive and preserves vocabulary and login sessions. Build the frontend with `VITE_STAGE_PREVIEW=false`, then rebuild and recreate only the Stage container. Audio streams directly between clients and Soniox; avoid refreshing presenters mid-talk.
 
-After upgrading, check the public app and its assets as well as container health, then confirm the team settings and login still work. Publishing desktop installers does not deploy the hosted server. Existing v0.1.3 desktop apps can load the new hosted controls after a restart, but their native overlay ignores the optional translation-language metadata; install v0.1.4 for the updated native language handling.
+After upgrading, verify public assets and container health, retained team settings/login, and authenticated meeting APIs. Install v0.1.5 on presenter computers for Separate caption window and Slides + caption strip. Existing apps retain overlay support and show an update message for unsupported modes. Publishing desktop installers does not deploy the hosted server.
 
+Optional personal summaries run on configured owner computers, never inside this shared server. A summary brief and complete transcript exports remain available to every team member. The server has no personal OMP/Codex login.
 To rotate the code or update provider settings, edit `.env.production` and rerun the Compose `up -d` command. Changing the code invalidates existing team logins. It does not cancel an already connected client-to-Soniox stream; revoke provider credentials separately if required.
 
 The server limits login failures and temporary speech credential requests. `TEAM_TOKEN_LIMIT_PER_MINUTE` is a single-server, in-memory issuance limit that resets on restart; it is not a spending or active-stream limit. Monitor usage through the provider account.

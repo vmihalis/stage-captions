@@ -83,6 +83,8 @@ jobs:
       - run: npm ci
       - run: npm run check
         timeout-minutes: 5
+      - run: npm test --prefix tools/summary-worker
+        timeout-minutes: 5
       - name: Package pilot installer
         run: npm run package:desktop -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
       - name: Verify Mac app, DMG, and ZIP integrity
@@ -168,9 +170,16 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<'NOTES'
-          Stage pilot: live English ↔ Japanese captions in a floating desktop window.
+          Stage v0.1.5 adds readable English ↔ Japanese captions, separate presentation layouts, and shared meeting history.
 
-          Choose automatic two-way translation or a fixed direction, Responsive or More context caption pacing, and a text size from 24–96 px. The reserved-space sample remains a local preview; screen capture and app resizing are not included.
+          **Choose your output at the top of Present:**
+          - **Separate caption window:** move and resize captions beside windowed slides or apps, including mirrored displays.
+          - **Slides + caption strip:** select a window or screen and fit its content above/below captions on an independent extended projector. Requires OS screen recording permission; test with your projector.
+          - **Over your apps:** the existing floating overlay.
+
+          **Easy to read** uses finalized phrases in fixed lines with a short display buffer. **Live drafts** keeps the quickest provisional updates. Complete finalized transcripts are saved to the team server, independently of caption clearing. Everyone holding the team code can read/export them. **Mark moment** bookmarks important parts of a meeting. Stage does not store microphone audio.
+
+          Meeting history includes transcript exports and a summary brief. Automatic OMP/Codex summaries are optional and run on a separately configured owner computer; the worker, runtime, and personal login are not included in the installers or hosted on the team server.
 
           Download the installer for your computer:
           - Apple Silicon Mac: mac-arm64.dmg (or .zip)
@@ -178,15 +187,13 @@ jobs:
           - Windows x64: win-x64.exe
           - Linux x64: linux-x86_64.AppImage or linux-amd64.deb
 
-          Mac pilot apps use ad-hoc signatures for integrity. They do not have Apple Developer ID signatures and are not notarized, so macOS may block them pending explicit approval. Windows installers are unsigned and may also show security warnings. Windows ARM and Linux ARM installers are not included.
+          Quit Stage, replace it with this version, and reopen it. Your team server address and existing login are kept. Install v0.1.5 for the new native output modes; your organizer must also update the hosted team server. Publishing installers does not deploy a team server.
 
-          On first launch, enter the HTTPS server address and shared team access code supplied by your organizer. No team credentials or Soniox API key are included in the installers. Microphone audio is sent directly to Soniox when you start live captions.
+          Mac pilot apps use ad-hoc signatures for integrity. They do not have Apple Developer ID signatures and are not notarized, so macOS may require Privacy & Security → Open Anyway. Windows installers are unsigned and may also show security warnings. Windows ARM and Linux ARM installers are not included.
 
-          Your organizer must update the hosted team server to make the new controls available. Existing v0.1.3 apps can load those controls after restarting; install v0.1.4 for the updated native overlay language handling. Publishing these installers does not deploy a team server.
+          No team credentials or Soniox API key are included. Microphone audio streams directly to Soniox. Rehearse with your actual speakers, projector, apps, and fullscreen modes before an event. Extended-projector capture has automated lifecycle coverage but still needs physical setup validation; there is no universal accent or latency guarantee.
 
-          Run a rehearsal with your microphone, projector, presentation apps, and fullscreen modes before your event. A successful build does not verify every operating system's overlay behavior or the accuracy of your team's speech.
-
-          SHA256SUMS contains checksums for every installer. For setup and hosting instructions, see the repository README.
+          SHA256SUMS contains checksums for every installer. See the repository README for onboarding and hosting.
           NOTES
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
             if [[ "$draft" != true ]]; then

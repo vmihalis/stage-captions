@@ -1,8 +1,8 @@
 # Stage
 
-Live English ↔ Japanese subtitles for presentations. The desktop app places a caption overlay above your slides, browser, and other apps on the screen you choose.
+Live English ↔ Japanese subtitles for presentations. Choose floating captions, a movable caption window beside your apps, or a presentation view with a reserved caption strip on an extended projector.
 
-Version 0.1.4 adds automatic English ↔ Japanese translation, **Responsive** and **More context** caption pacing, and editable text sizes from **24–96 px**. Hosted controls become available when your organizer updates the team server.
+Version 0.1.5 adds **Easy to read** captions, a **Separate caption window**, **Slides + caption strip** for an extended projector, and complete shared meeting transcripts with **Mark moment** bookmarks. Hosted controls become available when your organizer updates the team server; install v0.1.5 for the new native windows.
 
 **[Download the latest release](https://github.com/vmihalis/stage-captions/releases/latest)** · [All releases](https://github.com/vmihalis/stage-captions/releases) · [Host a team server](deploy/README.md)
 
@@ -15,7 +15,8 @@ Your organizer provides a **team server address** and a **shared team access cod
 3. Choose **Connect team** and enter the shared access code.
 4. Select your microphone, choose **Check mic**, and allow microphone access when prompted. This short microphone check stays on your computer.
 5. Under **Caption output**, select the display connected to the projector. Enter a **Text size (px)** from 24–96 and choose the top or bottom position.
-6. Choose **Translation** before starting: **Automatic · English ↔ Japanese**, or a fixed direction. Choose **Start captions**. The overlay opens automatically. Switch to your presentation.
+6. At the top of Present, choose **Over your apps**, **Separate caption window**, or **Slides + caption strip**. A separate window works beside windowed content on mirrored displays. The caption strip captures explicitly selected content for an independent extended display; it cannot reserve space inside an arbitrary fullscreen app.
+7. Choose automatic or fixed-direction **Translation**, then **Start captions**. Stage saves finalized speech and translations to your shared meeting history. Let participants know before starting; everyone with the team code can read and export the transcript.
 
 Try **Run a rehearsal** first to check placement without using a microphone or translation account. Then rehearse with a real speaker and the actual projector to check accuracy and delay.
 
@@ -23,13 +24,13 @@ Automatic mode uses one Soniox two-way session with English and Japanese languag
 
 For names or technical terms that should stay unchanged, add preferred translations such as `GitHub = GitHub` or `API = API` in **Team vocabulary**. Other pairs can use either direction; add the reverse pair separately when needed. Preferences guide the provider and cannot guarantee exact spelling or preservation. Stage displays the returned text without guessing language from Latin characters or applying word replacements.
 
-Choose **Caption pace** before starting live captions. **Responsive** uses Soniox's recommended lower-latency endpoint settings on the v5 model; **More context** keeps the original semantic endpoint timing for speakers who pause mid-sentence. Both display draft translations as soon as they arrive. Earlier finalization can split phrases and affect recognition accuracy, so compare the two with your presenters. The endpoint delay limits time after a speech boundary; it does not guarantee a translation every 1.5 seconds. See [Soniox's endpoint tuning guidance](https://soniox.com/docs/stt/rt/endpoint-detection).
+Choose **Speech processing** before starting live captions. **Responsive** uses Soniox's recommended lower-latency endpoint settings on the v5 model; **More context** keeps the original semantic endpoint timing for speakers who pause mid-sentence. **Audience reading → Easy to read** publishes finalized phrases in fixed lines with a 600 ms batching window. **Live drafts** shows provisional words immediately. Reading time can add display delay during bursts; it does not slow recognition or discard the separate meeting transcript. Earlier finalization can split phrases and affect recognition accuracy, so compare the two with your presenters. The endpoint delay limits time after a speech boundary; it does not guarantee a translation every 1.5 seconds. See [Soniox's endpoint tuning guidance](https://soniox.com/docs/stt/rt/endpoint-detection).
 
 The overlay lets clicks pass through to the app underneath. **Cmd+Shift+H** on Mac or **Ctrl+Shift+H** on Windows/Linux opens, hides, or shows captions. The **Show captions on screen / Hide captions** button does the same. Old text clears after six seconds without new recognized words or translation updates; late translations get a fresh reading window. Hiding keeps listening; choose **Stop captions** to stop translation. Closing Stage also ends capture.
 
 The website is a browser preview with a separate caption window. Install the desktop app for the floating overlay. A team connection lasts seven days; click **Team connected** to disconnect this computer.
 
-The v0.1.3 desktop app can load the new controls after the team server is updated; close and reopen Stage to refresh them. Install v0.1.4 for the updated native overlay language handling.
+Older apps can load the hosted controls after a restart but cannot use the new native output modes. Quit Stage and replace the app with v0.1.5; the server address and existing login are retained. Choose **Meetings** to review/export complete transcripts and marked moments. **Summary brief** works for everyone. Automatic summaries are optional on an owner computer with the [local OMP worker](tools/summary-worker/README.md); credentials remain local and the installer does not include that worker.
 
 ### Choose a download
 
@@ -50,9 +51,9 @@ Fullscreen behavior depends on the operating system and display setup. Linux Way
 
 Host one shared Stage server, configure its Soniox account, and give presenters the installer, HTTPS address, and shared code. [Deployment instructions](deploy/README.md) cover configuration, storage, and code rotation.
 
-The permanent Soniox key stays on the server. After team authentication, the app receives a temporary speech credential and sends microphone audio directly to Soniox. Stage does not save audio or transcripts. Team vocabulary and login sessions are stored on the server; Soniox's own processing terms apply to the speech service. Translation usage is billed to the organizer's Soniox account.
+The permanent Soniox key stays on the server. After team authentication, the app receives a temporary speech credential and sends microphone audio directly to Soniox. Stage does not store microphone audio. Finalized source text, translations, timestamps, and bookmarks are saved on the shared team server, along with vocabulary and login sessions; Soniox's own processing terms apply to the speech service. Translation usage is billed to the organizer's Soniox account.
 
-Everyone with the shared code can use translation and edit **Team vocabulary**. This version is intended for a trusted team.
+Everyone with the shared code can use translation, edit **Team vocabulary**, and read/export every saved meeting. This version is intended for a trusted team.
 
 ## Develop locally
 
@@ -80,4 +81,4 @@ npm run check
 
 See [desktop development and packaging](electron/README.md) for native checks and installer builds. Secrets, local databases, and generated installers are excluded from Git; release installers are distributed as GitHub release assets.
 
-For local layout experiments, set `VITE_STAGE_PREVIEW=true` when starting Vite or building. This enables a fitted sample slide with a reserved top/bottom caption strip. The sample is excluded from production builds with `VITE_STAGE_PREVIEW=false`; Stage does not capture screens, resize other apps, or reserve space in arbitrary fullscreen presentations.
+For an isolated local rehearsal, see [preview setup and validation](docs/readable-meetings-preview.md). Production builds use `VITE_STAGE_PREVIEW=false`. Actual app/screen capture belongs to the trusted native picker; Stage never forces other applications to resize. See the [readability research](docs/caption-readability-research.md) for design evidence and pilot timing limits.

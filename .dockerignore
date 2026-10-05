@@ -18,3 +18,5 @@ tests
 *.sqlite-wal
 *.log
 .DS_Store
+
+tools

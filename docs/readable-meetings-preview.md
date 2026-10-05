@@ -1,6 +1,6 @@
 # Readable meetings and output layouts — local preview
 
-This revision is on `codex/readable-meetings` in the isolated streaming worktree. It has not been pushed, released, or deployed. Production v0.1.4 and the installed Stage profile were left unchanged.
+This records the isolated validation performed before v0.1.5. During preview testing, production v0.1.4 and the installed Stage profile were left unchanged. See the release notes and deployment guide for the shipped version.
 
 ## What changes
 
@@ -32,4 +32,4 @@ A real macOS native smoke checked movable/resizable output, preserved bounds, ov
 
 One end-to-end summary request through the native runner and the actual local OMP/Codex integration succeeded on a synthetic six-entry English/Japanese meeting. It used `gpt-6-sol` and returned five evidence-linked claims; it did not process a real meeting. This checks current integration, not general summary accuracy or future account entitlement.
 
-Remaining acceptance checks: an actual extended projector and OS capture permission, real English/Japanese speakers and accents, slow venue networking, and reader feedback on the 600 ms display buffer. Desktop capture has lifecycle fixture coverage, not a physical-projector result. The new desktop modes require a future installer/release before other team computers receive them.
+Remaining acceptance checks: an actual extended projector and OS capture permission, real English/Japanese speakers and accents, slow venue networking, and reader feedback on the 600 ms display buffer. Desktop capture has lifecycle fixture coverage, not a physical-projector result. The new desktop modes require the v0.1.5 installer and an updated team server.

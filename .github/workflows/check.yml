@@ -27,3 +27,5 @@ jobs:
       - run: npm ci
       - run: npm run check
         timeout-minutes: 5
+      - run: npm test --prefix tools/summary-worker
+        timeout-minutes: 5
