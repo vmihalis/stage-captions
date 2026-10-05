@@ -24,6 +24,8 @@ export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: n
   const [status, setStatus] = useState<CaptionStatus>('idle');
   const [error, setError] = useState('');
   const [muted, setMuted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pauseRequested = useRef(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
   const stopping = useRef(false);
@@ -57,6 +59,8 @@ export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: n
 
   const cancel = useCallback(() => {
     generation.current++;
+    pauseRequested.current = false;
+    setPaused(false);
     if (timer.current) clearInterval(timer.current);
     timer.current = null;
     recording.current?.cancel();
@@ -68,6 +72,30 @@ export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: n
     window.addEventListener('pagehide', leave);
     return () => { window.removeEventListener('pagehide', leave); cancel(); };
   }, [cancel]);
+
+  const pause = useCallback(() => {
+    if (timer.current) {
+      pauseRequested.current = true;
+      setPaused(true);
+      return;
+    }
+    // The SDK pauses both microphone capture and audio transmission, finalizes
+    // the current phrase, and keeps this same recording/session alive.
+    const active = recording.current;
+    if (active?.state !== 'recording') return;
+    active.pause();
+  }, []);
+
+  const resume = useCallback(() => {
+    if (timer.current) {
+      pauseRequested.current = false;
+      setPaused(false);
+      return;
+    }
+    const active = recording.current;
+    if (active?.state !== 'paused') return;
+    active.resume();
+  }, []);
 
   const stop = useCallback(async () => {
     if (timer.current) {
@@ -150,11 +178,19 @@ export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: n
     active.on('source_unmuted', () => { if (valid()) setMuted(false); });
     active.on('state_change', ({ new_state }) => {
       if (!valid()) return;
-      if (new_state === 'stopped' || new_state === 'canceled') { setStatus('stopped'); if (!stopping.current) handlers.current.onEnded?.(new_state === 'canceled'); }
+      if (new_state === 'paused' || new_state === 'recording') {
+        pauseRequested.current = new_state === 'paused';
+        setPaused(pauseRequested.current);
+      }
+      if (new_state === 'stopped' || new_state === 'canceled') {
+        pauseRequested.current = false; setPaused(false);
+        setStatus('stopped'); if (!stopping.current) handlers.current.onEnded?.(new_state === 'canceled');
+      }
     });
     active.on('error', failure => {
       if (!valid()) return;
       generation.current++;
+      pauseRequested.current = false; setPaused(false);
       setStatus('error'); setCaptions(emptyCaptions()); resetAudience();
       const code = 'code' in failure ? String(failure.code) : '';
       if (/permission|denied/i.test(code + failure.name)) setError('Microphone access was denied. Allow it in your system or browser settings, then try again.');
@@ -174,6 +210,7 @@ export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: n
     setStatus('rehearsal'); setStartedAt(Date.now()); setLastUpdate(null);
     let tick = 0;
     const update = () => {
+      if (pauseRequested.current) return;
       const index = Math.floor(tick / 60) % rehearsalLines.length;
       const phase = tick % 60;
       const line = rehearsalLines[index];
@@ -202,5 +239,5 @@ export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: n
     setAudienceCaptions(captionDisplayOutput(audience.current));
   }, []);
 
-  return { captions, audienceCaptions, status, error, muted, startedAt, lastUpdate, start, stop, rehearse, clear };
+  return { captions, audienceCaptions, status, error, muted, paused, startedAt, lastUpdate, start, stop, pause, resume, rehearse, clear };
 }

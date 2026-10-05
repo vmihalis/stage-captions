@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, session, globalShortcut, Menu, desktopCapturer, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, globalShortcut, Menu, desktopCapturer, dialog, Tray, nativeImage } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -8,10 +8,15 @@ const { normalizeServerOrigin, matchesOrigin, normalizeOverlayOptions, normalize
 const { createPresentation } = require('./presentation.cjs');
 const { createSummaryRunner } = require('./summary.cjs');
 const { summaryEnvironment } = require('./summary-config.cjs');
+const { createController, workspaceURL, isWorkspaceURL, createOwnedSummaryRunner } = require('./controller.cjs');
 let summaryRunner = createSummaryRunner();
+let summaryTasks = createOwnedSummaryRunner(summaryRunner);
 
 const localURL = file => pathToFileURL(path.join(__dirname, file)).href;
 let mainWindow;
+let workspaceWindow;
+let workspaceGeneration = 0;
+let controller;
 let connectionWindow;
 let overlayWindow;
 let presentation;
@@ -53,6 +58,14 @@ function requireSender(event, window, allowed) {
 }
 const requireMainSender = event => requireSender(event, mainWindow, url => matchesOrigin(url, trustedOrigin));
 const requireConnectionSender = event => requireSender(event, connectionWindow, url => url === localURL('connection.html'));
+const requireAppSender = event => {
+  if (workspaceWindow && !workspaceWindow.isDestroyed() && event.sender === workspaceWindow.webContents) {
+    requireSender(event, workspaceWindow, url => isWorkspaceURL(url, trustedOrigin));
+    return workspaceWindow;
+  }
+  requireMainSender(event);
+  return mainWindow;
+};
 
 function denyPermissions(partition) {
   const localSession = session.fromPartition(partition);
@@ -189,31 +202,99 @@ function closeOverlay(force = false) {
 
 async function createMain(origin) {
   trustedOrigin = origin;
+  await controller.initialize();
   mainWindow = new BrowserWindow({ title: 'Stage', width: 1440, height: 980, minWidth: 860, minHeight: 680,
-    backgroundColor: '#f7f8f2', show: false,
+    frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: true, show: false,
+    ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
     webPreferences: rendererPreferences('preload.cjs', 'persist:stage-team') });
   const ownWindow = mainWindow;
+  controller.attach(ownWindow);
+  registerShortcuts();
   guardNavigation(ownWindow, url => matchesOrigin(url, trustedOrigin));
+  ownWindow.on('close', event => {
+    if (!changingServer && !quitting && controller.compact) { event.preventDefault(); controller.hide(); }
+  });
   ownWindow.on('closed', () => {
-    summaryRunner.cancel();
+    summaryTasks.cancel(ownWindow);
     if (mainWindow === ownWindow) mainWindow = undefined;
     closeOverlay();
+    closeWorkspace();
     if (!changingServer && !quitting) app.quit();
   });
   ownWindow.webContents.on('render-process-gone', () => {
+    summaryTasks.cancel(ownWindow);
     captions = { english: '', japanese: '', partialJapanese: '', status: 'error' };
+    controller.update({ status: 'error', paused: false, pending: 0 });
     sendCaptions();
   });
+  ownWindow.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => { if (isMainFrame) summaryTasks.cancel(ownWindow); });
   try {
     await ownWindow.loadURL(origin);
     ownWindow.show();
   } catch {
     changingServer = true;
     ownWindow.destroy();
+    clearControllerShell();
     changingServer = false;
     connectionMessage = 'Could not reach the team server. Check the address and your connection.';
     await showConnection();
   }
+}
+
+function closeWorkspace() {
+  workspaceGeneration++;
+  if (workspaceWindow && !workspaceWindow.isDestroyed()) workspaceWindow.destroy();
+  workspaceWindow = undefined;
+}
+
+async function openWorkspace(view, meetingId) {
+  const target = workspaceURL(trustedOrigin, view, meetingId);
+  if (!mainWindow || mainWindow.isDestroyed() || changingServer || quitting) return;
+  if (!workspaceWindow || workspaceWindow.isDestroyed()) {
+    const area = screen.getPrimaryDisplay().workArea;
+    workspaceWindow = new BrowserWindow({ title: 'Stage workspace', width: Math.min(1180, area.width), height: Math.min(820, area.height),
+      minWidth: Math.min(720, area.width), minHeight: Math.min(520, area.height), backgroundColor: '#f7f8f2', show: false,
+      webPreferences: rendererPreferences('preload.cjs', 'persist:stage-team') });
+    const created = workspaceWindow;
+    guardNavigation(created, url => isWorkspaceURL(url, trustedOrigin));
+    created.on('closed', () => { summaryTasks.cancel(created); if (workspaceWindow === created) workspaceWindow = undefined; });
+    created.webContents.on('render-process-gone', () => summaryTasks.cancel(created));
+    created.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => { if (isMainFrame) summaryTasks.cancel(created); });
+  }
+  const ownWindow = workspaceWindow;
+  const current = ++workspaceGeneration;
+  try {
+    if (ownWindow.webContents.getURL() !== target) await ownWindow.loadURL(target);
+    if (workspaceGeneration !== current || ownWindow.isDestroyed()) return;
+    if (ownWindow.isMinimized()) ownWindow.restore();
+    ownWindow.show(); ownWindow.focus();
+  } catch {
+    if (workspaceGeneration !== current || ownWindow.isDestroyed()) return;
+    ownWindow.destroy();
+    throw new Error('Could not open the workspace. Check the team connection and try again.');
+  }
+}
+
+function sendControllerAction(action) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stage:controller-action', action);
+}
+
+function registerShortcuts() {
+  globalShortcut.unregister('CommandOrControl+Shift+H');
+  globalShortcut.unregister('CommandOrControl+Shift+B');
+  try { shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+H', toggleOverlay); }
+  catch { shortcutRegistered = false; }
+  try { controller.setShortcutRegistered(globalShortcut.register('CommandOrControl+Shift+B', () => controller.toggle())); }
+  catch { controller.setShortcutRegistered(false); }
+}
+
+function clearControllerShell() {
+  globalShortcut.unregister('CommandOrControl+Shift+H');
+  globalShortcut.unregister('CommandOrControl+Shift+B');
+  shortcutRegistered = false;
+  controller?.setShortcutRegistered(false);
+  controller?.dispose();
+  closeWorkspace();
 }
 
 async function showConnection() {
@@ -232,24 +313,31 @@ async function showConnection() {
 
 function registerIPC() {
   ipcMain.handle('stage:summarize-meeting', async (event, payload) => {
-    requireMainSender(event);
-    return summaryRunner.run(payload);
+    const owner = requireAppSender(event);
+    return summaryTasks.run(owner, payload);
   });
-  ipcMain.handle('stage:cancel-summary', event => { requireMainSender(event); summaryRunner.cancel(); });
+  ipcMain.handle('stage:cancel-summary', event => { summaryTasks.cancel(requireAppSender(event)); });
   ipcMain.handle('stage:capabilities', event => {
-    requireMainSender(event);
-    return { apiVersion: 2, outputModes: ['overlay', 'window', 'presentation'], stableLines: true, saveMeetingExport: true, summaryWorker: summaryRunner.available };
+    requireAppSender(event);
+    return { apiVersion: 2, outputModes: ['overlay', 'window', 'presentation'], stableLines: true, saveMeetingExport: true, summaryWorker: summaryRunner.available,
+      compactController: true, controllerShortcutRegistered: controller.shortcutRegistered };
   });
+  ipcMain.handle('stage:controller-layout', (event, layout) => { requireMainSender(event); controller.layout(layout); });
+  ipcMain.handle('stage:hide-controller', event => { requireMainSender(event); controller.hide(); });
+  ipcMain.on('stage:controller-state', (event, state) => {
+    try { requireMainSender(event); controller.update(state); } catch { /* Ignore malformed send-only updates. */ }
+  });
+  ipcMain.handle('stage:open-workspace', (event, view, meetingId) => { requireMainSender(event); return openWorkspace(view, meetingId); });
   ipcMain.handle('stage:save-meeting-export', async (event, payload) => {
-    requireMainSender(event);
+    const parent = requireAppSender(event);
     if (!payload || typeof payload !== 'object' || !['json', 'md'].includes(payload.format)
       || typeof payload.text !== 'string' || Buffer.byteLength(payload.text, 'utf8') > 20 * 1024 * 1024
       || typeof payload.filename !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,180}$/.test(payload.filename)) {
       throw new Error('Invalid meeting export.');
     }
-    const result = await dialog.showSaveDialog(mainWindow, { title: 'Save meeting transcript',
+    const result = await dialog.showSaveDialog(parent, { title: 'Save meeting transcript',
       defaultPath: payload.filename, filters: [{ name: payload.format === 'json' ? 'JSON' : 'Markdown', extensions: [payload.format] }] });
-    requireMainSender(event);
+    requireAppSender(event);
     if (result.canceled || !result.filePath) return { saved: false };
     await fs.writeFile(result.filePath, payload.text, { encoding: 'utf8', mode: 0o600 });
     return { saved: true };
@@ -265,6 +353,7 @@ function registerIPC() {
   ipcMain.handle('stage:configure-overlay', (event, options) => { requireMainSender(event); configureOverlay(options); });
   ipcMain.handle('stage:overlay-state', event => { requireMainSender(event); return getOverlayState(); });
   ipcMain.handle('stage:close-overlay', event => { requireMainSender(event); closeOverlay(); });
+  ipcMain.handle('stage:toggle-overlay', event => { requireMainSender(event); return toggleOverlay(); });
   ipcMain.on('stage:update-overlay', (event, payload) => {
     // Send-only IPC must not crash the app when a renderer passes malformed data.
     try { requireMainSender(event); captions = normalizeCaptionPayload(payload); sendCaptions(); } catch { /* Ignore invalid updates. */ }
@@ -307,9 +396,11 @@ function configureMenu() {
       changingServer = true;
       closeOverlay();
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+      clearControllerShell();
       changingServer = false;
       await showConnection();
     } },
+    { label: 'Hide / show Stage remote', accelerator: 'CommandOrControl+Shift+B', click: () => controller?.toggle() },
     { label: 'Hide / show captions', accelerator: 'CommandOrControl+Shift+H', click: toggleOverlay },
     { label: 'Close captions', click: closeOverlay },
     { type: 'separator' }, { role: 'quit' },
@@ -348,6 +439,9 @@ async function savedOrigin() {
 
 app.whenReady().then(async () => {
   summaryRunner = createSummaryRunner({ env: await summaryEnvironment(app.getPath('userData')) });
+  summaryTasks = createOwnedSummaryRunner(summaryRunner);
+  controller = createController({ app, screen, Tray, Menu, nativeImage, onAction: sendControllerAction,
+    onWorkspace: view => { void openWorkspace(view).catch(() => {}); } });
   denyPermissions('stage-overlay');
   denyPermissions('stage-connection');
   presentation = createPresentation({ BrowserWindow, desktopCapturer, screen, session, ipcMain,
@@ -357,12 +451,9 @@ app.whenReady().then(async () => {
   installMainPermissions();
   registerIPC();
   configureMenu();
-  // Registration can fail if another app owns the shortcut; menu controls remain available.
-  try { shortcutRegistered = globalShortcut.register('CommandOrControl+Shift+H', toggleOverlay); }
-  catch { shortcutRegistered = false; }
-  screen.on('display-removed', () => positionOverlay());
-  screen.on('display-metrics-changed', () => positionOverlay(true));
-  screen.on('display-added', () => positionOverlay());
+  screen.on('display-removed', () => { positionOverlay(); controller.displaysChanged(); });
+  screen.on('display-metrics-changed', () => { positionOverlay(true); controller.displaysChanged(); });
+  screen.on('display-added', () => { positionOverlay(); controller.displaysChanged(); });
   let origin;
   try { origin = await savedOrigin(); }
   catch { connectionMessage = 'The configured team server address is invalid. Enter an HTTPS address.'; }
@@ -370,6 +461,7 @@ app.whenReady().then(async () => {
   else await showConnection();
 });
 
-app.on('before-quit', () => { quitting = true; summaryRunner.cancel(); closeOverlay(); });
+app.on('activate', () => { if (mainWindow && !mainWindow.isDestroyed()) controller?.show(); else connectionWindow?.show(); });
+app.on('before-quit', () => { quitting = true; summaryTasks.cancel(); closeOverlay(); clearControllerShell(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => { if (!changingServer) app.quit(); });

@@ -170,14 +170,16 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<'NOTES'
-          Stage v0.1.5 adds readable English ↔ Japanese captions, separate presentation layouts, and shared meeting history.
+          Stage v0.1.6 puts live English ↔ Japanese caption controls in a small floating remote.
 
-          **Choose your output at the top of Present:**
-          - **Separate caption window:** move and resize captions beside windowed slides or apps, including mirrored displays.
-          - **Slides + caption strip:** select a window or screen and fit its content above/below captions on an independent extended projector. Requires OS screen recording permission; test with your projector.
-          - **Over your apps:** the existing floating overlay.
+          - **Start / Pause / Resume** from the bar. Use **⋯ → End & save** to finish a meeting.
+          - Click the **output icon** for **Overlay**, **Window**, or **Slides + strip**. Window sits beside windowed apps, including on mirrored displays. Slides + strip fits selected content above/below captions on an independent extended projector and requires screen recording permission.
+          - Open **⋯** for Settings, Meetings, Vocabulary, and microphone-free Rehearse. Meetings and vocabulary open in a separate workspace while captions keep running.
+          - **Cmd/Ctrl+Shift+B** hides or restores the remote; **Cmd/Ctrl+Shift+H** toggles captions. Stage's menu-bar/system-tray icon provides recovery if a shortcut is unavailable.
 
-          **Easy to read** uses finalized phrases in fixed lines with a short display buffer. **Live drafts** keeps the quickest provisional updates. Complete finalized transcripts are saved to the team server, independently of caption clearing. Everyone holding the team code can read/export them. **Mark moment** bookmarks important parts of a meeting. Stage does not store microphone audio.
+          Hiding captions or hiding/closing the remote keeps listening. Pause stops sending new audio but preserves the meeting, speech session, and microphone resource; already-sent speech can finish translating, and provider charges may continue. **End & save** releases the microphone. **Quit Stage** exits the app.
+
+          **Steady phrases** uses finalized phrases in fixed lines with a short display buffer. **Live drafts** keeps the quickest provisional updates. Complete finalized transcripts are saved to the team server, independently of caption clearing. Everyone holding the team code can read/export them. The bookmark button marks important moments. Stage does not store microphone audio.
 
           Meeting history includes transcript exports and a summary brief. Automatic OMP/Codex summaries are optional and run on a separately configured owner computer; the worker, runtime, and personal login are not included in the installers or hosted on the team server.
 
@@ -187,11 +189,11 @@ jobs:
           - Windows x64: win-x64.exe
           - Linux x64: linux-x86_64.AppImage or linux-amd64.deb
 
-          Quit Stage, replace it with this version, and reopen it. Your team server address and existing login are kept. Install v0.1.5 for the new native output modes; your organizer must also update the hosted team server. Publishing installers does not deploy a team server.
+          Choose End & save before quitting Stage, replace it with v0.1.6, and reopen it. Your team server address and existing login are kept. The new installer is required for the compact native remote and separate workspace; older apps show update guidance for unsupported actions. Your organizer must also update the hosted team server. Publishing installers does not deploy a team server.
 
           Mac pilot apps use ad-hoc signatures for integrity. They do not have Apple Developer ID signatures and are not notarized, so macOS may require Privacy & Security → Open Anyway. Windows installers are unsigned and may also show security warnings. Windows ARM and Linux ARM installers are not included.
 
-          No team credentials or Soniox API key are included. Microphone audio streams directly to Soniox. Rehearse with your actual speakers, projector, apps, and fullscreen modes before an event. Extended-projector capture has automated lifecycle coverage but still needs physical setup validation; there is no universal accent or latency guarantee.
+          No team credentials or Soniox API key are included. Microphone audio streams directly to Soniox. Local Mac rehearsal and automated tests cover the compact controls and native lifecycle, not every presentation setup. Windows, Linux, physical projectors, and each presenter's fullscreen apps still need rehearsal before an event. There is no universal accent or latency guarantee.
 
           SHA256SUMS contains checksums for every installer. See the repository README for onboarding and hosting.
           NOTES

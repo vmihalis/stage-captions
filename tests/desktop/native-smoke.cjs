@@ -202,8 +202,10 @@ async function smoke() {
   testStage = 'movable caption window and stable rows';
   const capabilities = await main.webContents.executeJavaScript('window.stageDesktop.getCapabilities()');
   assert.equal(typeof capabilities.summaryWorker, 'boolean');
-  assert.deepEqual({ ...capabilities, summaryWorker: false },
-    { apiVersion: 2, outputModes: ['overlay', 'window', 'presentation'], stableLines: true, saveMeetingExport: true, summaryWorker: false });
+  assert.equal(capabilities.controllerShortcutRegistered, globalShortcut.isRegistered('CommandOrControl+Shift+B'));
+  assert.deepEqual({ ...capabilities, summaryWorker: false, controllerShortcutRegistered: false },
+    { apiVersion: 2, outputModes: ['overlay', 'window', 'presentation'], stableLines: true, saveMeetingExport: true, summaryWorker: false,
+      compactController: true, controllerShortcutRegistered: false });
   await assert.rejects(main.webContents.executeJavaScript(`window.stageDesktop.saveMeetingExport({filename:'../not-allowed',text:'test',format:'md'})`));
   const windowOptions = { displayId: selected.id, fontSize: 48, position: 'bottom', showEnglish: false,
     opacity: .88, clickThrough: true, outputMode: 'window' };
@@ -249,12 +251,105 @@ async function smoke() {
   await new Promise(resolve => setTimeout(resolve, 250));
   assert.equal(main.webContents.getURL(), before);
 
+  testStage = 'opting into the compact native controller';
+  assert.ok(main.getBounds().width >= 860, 'Older hosted pages retain a usable large window until opting in.');
+  await assert.rejects(main.webContents.executeJavaScript('window.stageDesktop.setControllerLayout({height:70, width:1000})'));
+  await main.webContents.executeJavaScript('window.stageDesktop.setControllerLayout({height:72})');
+  assert.equal(main.getBounds().width, 440);
+  assert.equal(main.getBounds().height, 72);
+  assert.equal(main.isResizable(), false);
+  assert.equal(main.isAlwaysOnTop(), true);
+  if (process.platform !== 'win32') assert.equal(main.isVisibleOnAllWorkspaces(), true);
+  const controllerToggle = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.accelerator === 'CommandOrControl+Shift+B');
+  assert.ok(controllerToggle, 'The remote shortcut must have a menu fallback.');
+  await main.webContents.executeJavaScript(`(async () => {
+    window.controllerIdentity = 'synthetic-session-stays-mounted';
+    window.controllerStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    window.controllerActions = [];
+    window.unsubscribeController = window.stageDesktop.onControllerAction(action => window.controllerActions.push(action));
+    window.stageDesktop.updateControllerState({status:'live',paused:false,pending:2});
+    window.stageDesktop.updateControllerState({status:'invalid',paused:false,pending:2});
+  })()`);
+  await main.webContents.executeJavaScript(`window.stageDesktop.openOverlay(${JSON.stringify(windowOptions)})`);
+  const retainedOutput = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
+  testStage = 'hiding the remote without ending audio or caption output';
+  await main.webContents.executeJavaScript('window.stageDesktop.hideController()');
+  assert.equal(main.isVisible(), false);
+  assert.equal(main.isDestroyed(), false);
+  assert.equal(retainedOutput.isVisible(), true);
+  assert.equal(await main.webContents.executeJavaScript('window.controllerStream.getAudioTracks()[0].readyState'), 'live');
+  controllerToggle.click();
+  await eventually(() => main.isVisible());
+  main.close();
+  assert.equal(main.isDestroyed(), false, 'Closing the compact remote must hide, not end the meeting.');
+  await eventually(() => !main.isVisible());
+  controllerToggle.click();
+  await eventually(() => main.isVisible());
+  const previousBounds = main.getBounds();
+  main.setPosition(previousBounds.x - 20, previousBounds.y + 12);
+  await eventually(async () => {
+    try { const saved = JSON.parse(await fs.readFile(path.join(dataDirectory, 'controller-window.json'), 'utf8'));
+      return saved.x === previousBounds.x - 20 && saved.y === previousBounds.y + 12;
+    } catch { return false; }
+  });
+  await main.webContents.executeJavaScript('window.stageDesktop.setControllerLayout({height:320})');
+  assert.equal(main.getBounds().height, 320);
+  await main.webContents.executeJavaScript('window.stageDesktop.setControllerLayout({height:72})');
+  assert.equal(main.getBounds().x, previousBounds.x - 20);
+
+  testStage = 'independent workspace window and restricted bridge';
+  const selectedMeeting = '09b2b180-ac00-4eef-9d16-fb21e35096d9';
+  await main.webContents.executeJavaScript(`window.stageDesktop.openWorkspace('meetings', '${selectedMeeting}')`);
+  const workspace = await eventually(() => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('/workspace?view=meetings')));
+  assert.equal(workspace.isAlwaysOnTop(), false);
+  assert.equal(workspace.isResizable(), true);
+  assert.equal(workspace.webContents.session, main.webContents.session);
+  assert.equal((await workspace.webContents.executeJavaScript('window.stageDesktop.getCapabilities()')).compactController, true);
+  assert.equal(main.webContents.getURL(), before);
+  assert.equal(await main.webContents.executeJavaScript('window.controllerIdentity'), 'synthetic-session-stays-mounted');
+  for (const call of ['getDisplays()', 'setControllerLayout({height:64})', 'hideController()', 'closeOverlay()',
+    'toggleOverlay()', 'openWorkspace("setup")', 'getOverlayState()']) {
+    await assert.rejects(workspace.webContents.executeJavaScript(`window.stageDesktop.${call}`), /cannot perform that action/);
+  }
+  await assert.rejects(workspace.webContents.executeJavaScript('window.stageDesktop.saveMeetingExport({filename:"../no",text:"test",format:"md"})'), /Invalid meeting export/);
+  await workspace.webContents.executeJavaScript('window.stageDesktop.cancelSummary()');
+  const workspaceMicDenied = await workspace.webContents.executeJavaScript(`(async () => {
+    try { const stream = await navigator.mediaDevices.getUserMedia({audio:true}); stream.getTracks().forEach(track => track.stop()); return false; }
+    catch { return true; }
+  })()`);
+  assert.equal(workspaceMicDenied, true);
+  const workspaceBefore = workspace.webContents.getURL();
+  await workspace.webContents.executeJavaScript('window.location.href = "/"; true');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(workspace.webContents.getURL(), workspaceBefore);
+  await main.webContents.executeJavaScript('window.stageDesktop.openWorkspace("vocabulary")');
+  assert.ok(workspace.webContents.getURL().endsWith('/workspace?view=vocabulary'));
+  assert.equal(BrowserWindow.getAllWindows().filter(window => window.webContents.getURL().includes('/workspace?')).length, 1);
+  workspace.close();
+  await eventually(() => workspace.isDestroyed());
+  assert.equal(await main.webContents.executeJavaScript('window.controllerStream.getAudioTracks()[0].readyState'), 'live');
+  assert.equal(retainedOutput.isVisible(), true);
+  await main.webContents.executeJavaScript('window.stageDesktop.toggleOverlay()');
+  assert.equal(retainedOutput.isDestroyed(), false);
+  assert.equal(retainedOutput.isVisible(), false);
+  await main.webContents.executeJavaScript('window.stageDesktop.toggleOverlay()');
+  assert.equal(retainedOutput.isVisible(), true);
+  main.webContents.send('stage:controller-action', 'settings');
+  await eventually(async () => await main.webContents.executeJavaScript('window.controllerActions.length === 1'));
+  await main.webContents.executeJavaScript('window.unsubscribeController(); window.controllerStream.getTracks().forEach(track => track.stop())');
+  main.webContents.send('stage:controller-action', 'output');
+  assert.deepEqual(await main.webContents.executeJavaScript('window.controllerActions'), ['settings']);
+  await main.webContents.executeJavaScript('window.stageDesktop.openWorkspace("setup")');
+  const setupWorkspace = await eventually(() => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/workspace?view=setup')));
+
   // Switching servers closes the presenter renderer and presents the local setup page.
   Menu.getApplicationMenu().items[0].submenu.items[0].click();
   testStage = 'switching to connection setup';
   const connection = await eventually(() => BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/connection.html')));
   await eventually(() => connection.webContents.executeJavaScript('Boolean(window.stageConnection)'));
   assert.equal(main.isDestroyed(), true);
+  assert.equal(setupWorkspace.isDestroyed(), true);
+  assert.equal(globalShortcut.isRegistered('CommandOrControl+Shift+B'), false);
   await toggle.click();
   assert.equal(BrowserWindow.getAllWindows().filter(window => window.getTitle() === 'Stage captions').length, 0,
     'The shortcut must not create output while setting up a team server.');
@@ -267,6 +362,8 @@ async function smoke() {
       'newest words at 80px/1280px', 'inactive states clear stale captions',
       'shortcut opens closed output', 'settings preserve hidden output', 'fresh captions after reopen',
       'overlay lifecycle state and subscriptions', 'shortcut availability state',
+      'compact controller geometry and persistence', 'hidden controller retains synthetic microphone and output',
+      'separate workspace identity and permission boundaries', 'workspace closes without stopping captions',
       'renderer isolation', 'microphone-only permission', 'literal text', 'overlay teardown', 'external navigation denied', 'connection reset'] }));
   await finish(0);
 }

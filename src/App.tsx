@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeftRight, ArrowRight, Bookmark, FileText, AudioLines, BookOpen, Captions as CaptionsIcon, Check, ChevronRight, CircleHelp, CircleStop, ExternalLink, Globe2, KeyRound, LoaderCircle, LogOut, Mic, Monitor, Play, Radio, Settings2, SlidersHorizontal, Volume2, X } from 'lucide-react';
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Bookmark, BookOpen, Check, ChevronRight, CircleHelp, CircleStop, Ellipsis, Eye, EyeOff, FileText, GripVertical, KeyRound, LoaderCircle, LogOut, Mic, Monitor, PanelsTopLeft, Pause, Play, Settings2, X } from 'lucide-react';
 import { api } from './lib/api';
-import { captionTail, parseTranslations } from './lib/captions';
+import { readControllerPreferences, saveControllerPreferences } from './lib/controller-preferences';
 import { toOverlayPayload } from './lib/caption-output';
 import { useCaptions } from './hooks/useCaptions';
 import { useMeeting } from './hooks/useMeeting';
-import MeetingHistory from './MeetingHistory';
 import type { CaptionPace, TranslationMode } from './lib/speech-config';
-import CaptionText from './CaptionText';
-import RehearsalSlide from './RehearsalSlide';
 import type { Display, OverlayOptions, OverlayPayload, OverlayState, Session, Team } from './types';
 
 const emptyTeam: Team = { name: 'Team captions', glossary: { terms: [], translationTerms: [], background: '' } };
-const statusNames = { idle: 'Ready to present', connecting: 'Connecting', live: 'Live captions', rehearsal: 'Rehearsal', reconnecting: 'Reconnecting', stopping: 'Stopping', stopped: 'Session stopped', error: 'Session interrupted' };
+const statusNames = { idle: 'Ready', connecting: 'Connecting', live: 'Live', rehearsal: 'Rehearsal', reconnecting: 'Reconnecting', stopping: 'Saving', stopped: 'Ready', error: 'Interrupted' };
+type Panel = 'language' | 'output' | 'more' | 'settings' | 'connect' | null;
 const busyStates = ['live', 'connecting', 'reconnecting', 'stopping', 'rehearsal'];
 
 function formatTime(seconds: number) {
@@ -20,22 +18,27 @@ function formatTime(seconds: number) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<'present' | 'vocabulary' | 'setup' | 'meetings'>('present');
+  const [initial] = useState(readControllerPreferences);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [nativeCompact, setNativeCompact] = useState(false);
+  const [controllerShortcut, setControllerShortcut] = useState(false);
+  const [marked, setMarked] = useState(false);
+  const [savedDismissed, setSavedDismissed] = useState(false);
+  const remoteRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [team, setTeam] = useState<Team>(emptyTeam);
   const [serverError, setServerError] = useState('');
   const [notice, setNotice] = useState('');
-  const [connectOpen, setConnectOpen] = useState(false);
   const [accessCode, setAccessCode] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
-  const [deviceId, setDeviceId] = useState('default');
-  const [pace, setPace] = useState<CaptionPace>('responsive');
-  const [mode, setMode] = useState<TranslationMode>('auto');
-  const [displayMode, setDisplayMode] = useState<'readable' | 'drafts'>('readable');
+  const [deviceId, setDeviceId] = useState(initial.deviceId);
+  const [pace, setPace] = useState<CaptionPace>(initial.pace);
+  const [mode, setMode] = useState<TranslationMode>(initial.mode);
+  const [displayMode, setDisplayMode] = useState<'readable' | 'drafts'>(initial.displayMode);
   const [nativeModes, setNativeModes] = useState<string[]>(['overlay']);
-  const [summaryAvailable, setSummaryAvailable] = useState(false);
-  const [selectedMeeting, setSelectedMeeting] = useState<string | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [micChecking, setMicChecking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -44,27 +47,17 @@ export default function App() {
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [shortcutRegistered, setShortcutRegistered] = useState<boolean | null>(null);
   const [starting, setStarting] = useState(false);
-  const [options, setOptions] = useState<OverlayOptions>({ outputMode: window.stageDesktop ? 'overlay' : 'window', fontSize: 42, position: 'bottom', showEnglish: false, opacity: 0.9, clickThrough: true });
-  const [fontSizeInput, setFontSizeInput] = useState('42');
+  const [options, setOptions] = useState<OverlayOptions>(initial.options);
+  const [fontSizeInput, setFontSizeInput] = useState(String(initial.options.fontSize));
   const [now, setNow] = useState(Date.now());
   const channelId = useRef(crypto.randomUUID());
   const channel = useRef<BroadcastChannel | null>(null);
   const outputWindow = useRef<Window | null>(null);
   const micCleanup = useRef<(() => void) | null>(null);
   const micGeneration = useRef(0);
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const previewSection = useRef<HTMLElement>(null);
-  const [previewWidth, setPreviewWidth] = useState(800);
   const selectedWidth = displays.find(display => display.id === options.displayId)?.width ?? displays.find(display => display.primary)?.width ?? 1100;
   const captionWidth = Math.max(300, (options.outputMode === 'window' ? Math.min(selectedWidth, 1100) : selectedWidth) - 140);
   const lineCapacity = { en: Math.min(60, Math.max(8, Math.floor(captionWidth / (options.fontSize * .65)))), ja: Math.min(30, Math.max(8, Math.floor(captionWidth / options.fontSize))) };
-  const previewFontSize = Math.max(14, options.fontSize * Math.min(1, Math.max(200, previewWidth - 84) / captionWidth));
-  useEffect(() => {
-    const node = previewSection.current;
-    if (!node) return;
-    const observer = new ResizeObserver(() => setPreviewWidth(node.clientWidth));
-    observer.observe(node); return () => observer.disconnect();
-  }, [tab]);
   const meeting = useMeeting(session?.authenticated ?? false);
   const live = useCaptions({ maxLineCharacters: lineCapacity, onTokens: meeting.onTokens, onEnded: interrupted => { void meeting.end(interrupted).catch(error => setNotice((error as Error).message)); } });
   const desktop = window.stageDesktop;
@@ -74,11 +67,9 @@ export default function App() {
   const isBusy = busyStates.includes(live.status);
   const authorized = session?.authenticated ?? false;
   const ready = authorized && session?.provider.configured;
-  const interrupted = ['error', 'reconnecting', 'stopping', 'stopped'].includes(live.status);
   const elapsed = live.startedAt ? Math.max(0, (now - live.startedAt) / 1000) : 0;
   const outputPayload: OverlayPayload = toOverlayPayload(live.audienceCaptions, live.status);
-  const presenterSpeech = captionTail(live.captions.source + live.captions.partialSource, 500);
-  const modeLabel = mode === 'auto' ? 'English ↔ 日本語' : mode === 'ja_to_en' ? '日本語 → English' : 'English → 日本語';
+  const modeLabel = mode === 'auto' ? 'EN ⇄ JA' : mode === 'ja_to_en' ? 'JA → EN' : 'EN → JA';
   const outputState = useRef({ payload: outputPayload, options });
   outputState.current = { payload: outputPayload, options };
 
@@ -105,15 +96,11 @@ export default function App() {
     } catch (error) { setServerError((error as Error).message); }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); window.addEventListener('focus', refresh); return () => window.removeEventListener('focus', refresh); }, [refresh]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  useEffect(() => {
-    if (connectOpen) dialogRef.current?.showModal();
-    else dialogRef.current?.close();
-  }, [connectOpen]);
   useEffect(() => {
     const bus = new BroadcastChannel(`stage-${channelId.current}`);
     channel.current = bus;
@@ -134,7 +121,7 @@ export default function App() {
   }, [live.audienceCaptions, live.status, options, overlayOpen, desktop]);
   useEffect(() => {
     if (!desktop) return;
-    void desktop.getCapabilities?.().then(capabilities => { setNativeModes(capabilities.outputModes); setSummaryAvailable(!!capabilities.summaryWorker); }).catch(() => {});
+    void desktop.getCapabilities?.().then(capabilities => { setNativeModes(capabilities.outputModes); setNativeCompact(!!capabilities.compactController); setControllerShortcut(capabilities.controllerShortcutRegistered === true); setOptions(previous => capabilities.outputModes.includes(previous.outputMode ?? 'overlay') ? previous : { ...previous, outputMode: 'overlay' }); }).catch(() => {});
     void desktop.getDisplays().then(setDisplays).catch(() => setNotice('Could not read displays. Reconnect your projector and try opening captions again.'));
     let disposed = false;
     const reflectState = (state: OverlayState) => {
@@ -206,13 +193,15 @@ export default function App() {
     setNotice('');
     try {
       if (overlayOpen) {
-        if (desktop) await desktop.closeOverlay();
+        if (desktop) { if (desktop.toggleOverlay) await desktop.toggleOverlay(); else await desktop.closeOverlay(); }
         else outputWindow.current?.close();
         setOverlayOpen(false); return;
       }
       if (desktop) {
         setDisplays(await desktop.getDisplays());
-        await desktop.openOverlay(options);
+        const state = await desktop.getOverlayState?.();
+        if (state?.open && desktop.toggleOverlay) await desktop.toggleOverlay();
+        else await desktop.openOverlay(options);
         desktop.updateOverlay(outputState.current.payload);
       } else {
         outputWindow.current = window.open(`/captions?channel=${channelId.current}`, 'stage-captions', 'popup,width=1100,height=350');
@@ -224,15 +213,21 @@ export default function App() {
 
   const startPresentation = async (rehearsal = false) => {
     if (isBusy || starting) return;
-    if (!rehearsal && !authorized) { setConnectOpen(true); return; }
-    if (!rehearsal && !ready) { setTab('setup'); return; }
-    setStarting(true); setNotice(''); stopMicCheck();
+    if (!rehearsal && !authorized) { setPanel('connect'); return; }
+    if (!rehearsal && !ready) { setNotice('Your organizer needs to connect Soniox. Rehearsal is available in ⋯.'); return; }
+    setStarting(true); setNotice(''); setSavedDismissed(false); stopMicCheck();
     try {
       if (desktop && !overlayOpen) {
         desktop.updateOverlay({ english: '', japanese: '', partialJapanese: '', status: 'idle' });
         await desktop.openOverlay(options);
         setOverlayOpen(true);
       }
+      if (!desktop && !overlayOpen) {
+        outputWindow.current = window.open(`/captions?channel=${channelId.current}`, 'stage-captions', 'popup,width=1100,height=350');
+        if (!outputWindow.current) throw new Error('Allow pop-up windows for Stage, then start again.');
+        setOverlayOpen(true);
+      }
+      setPanel(null);
       if (rehearsal) live.rehearse(mode, displayMode);
       else { await meeting.start(mode); live.start(deviceId, pace, mode, displayMode); }
     } catch (error) {
@@ -245,7 +240,7 @@ export default function App() {
     event.preventDefault(); setConnecting(true); setConnectError('');
     try {
       await api('/api/auth/unlock', { method: 'POST', body: JSON.stringify({ code: accessCode }) });
-      setAccessCode(''); await refresh(); setConnectOpen(false);
+      setAccessCode(''); await refresh(); setPanel(null);
     } catch (error) { setConnectError((error as Error).message); }
     finally { setConnecting(false); }
   };
@@ -255,128 +250,178 @@ export default function App() {
       await live.stop(); await meeting.end(); stopMicCheck();
       const saved = await meeting.retry();
       if (saved?.pending || saved?.error) { setNotice('Wait for the transcript to finish saving before disconnecting the team.'); return; }
-      await api('/api/auth/logout', { method: 'POST' }); setTeam(emptyTeam); await refresh();
+      await api('/api/auth/logout', { method: 'POST' }); setTeam(emptyTeam); await refresh(); setPanel('connect');
     } catch (error) { setNotice((error as Error).message); }
   };
 
-  const sessionActions = <div className="session-actions">{isBusy ? <button className="button stop" disabled={live.status === 'stopping'} onClick={() => void live.stop()}><CircleStop size={18} />{live.status === 'stopping' ? 'Stopping…' : live.status === 'rehearsal' ? 'Stop rehearsal' : 'Stop & save meeting'}</button> : <button className="button primary" disabled={starting} onClick={() => void startPresentation()}><Mic size={18} />{starting ? 'Preparing captions…' : !authorized ? 'Connect team to go live' : !ready ? 'Finish live setup' : 'Start captions'}</button>}
-            <button className="button secondary" disabled={isBusy || starting} onClick={() => void startPresentation(true)}><Play size={16} /> Run a rehearsal</button></div>;
-
-  return <div className="app-shell">
-    <header className="topbar">
-      <a className="brand" href="/" aria-label="Stage home"><span className="brand-mark"><CaptionsIcon size={23} strokeWidth={1.8} /></span><strong>Stage</strong><span className="brand-divider" /><span className="workspace-name">{authorized ? team.name : 'Team captions'}</span></a>
-      <div className="topbar-actions"><span className="language-pill">{mode === 'ja_to_en' ? <span lang="ja">日本語</span> : 'English'} {mode === 'auto' ? <ArrowLeftRight size={13} /> : <ArrowRight size={13} />} {mode === 'ja_to_en' ? 'English' : <span lang="ja">日本語</span>}</span>
-        {authorized ? <button className="quiet connected-button" onClick={logout} title="Disconnect this laptop"><span className="status-dot" /> Team connected <LogOut size={14} /></button> : <button className="button secondary small" onClick={() => setConnectOpen(true)}><KeyRound size={15} /> Connect team</button>}
-      </div>
-    </header>
-    <div className="page-width">
-      <nav className="tabs" aria-label="Workspace"><button className={tab === 'present' ? 'active' : ''} onClick={() => setTab('present')}><Radio size={17} /> Present</button><button className={tab === 'vocabulary' ? 'active' : ''} onClick={() => setTab('vocabulary')}><BookOpen size={17} /> Team vocabulary</button><button className={tab === 'meetings' ? 'active' : ''} onClick={() => setTab('meetings')}><FileText size={17} /> Meetings</button><button className={tab === 'setup' ? 'active' : ''} onClick={() => setTab('setup')}><CircleHelp size={17} /> Setup guide</button><span className="platform-label">{desktop ? 'Desktop app' : 'Browser preview'}</span></nav>
-      {localPreview && <div className="notice" role="status">Local preview · Production is unchanged. Rehearsal uses sample captions; live translation requires a configured team account.</div>}
-      {notice && <div className="notice" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={16} /></button></div>}
-      {serverError && <div className="notice error" role="alert"><span>{serverError} Rehearsal remains available.</span><button className="text-button" onClick={refresh}>Retry connection</button></div>}
-      {tab === 'present' && <>
-        <div className="page-heading"><div><h1>Live captions</h1><p>{mode === 'auto' ? 'Speak English or Japanese. Captions translate into the other language.' : mode === 'ja_to_en' ? 'Your voice in Japanese. Your audience follows in English.' : 'Your voice in English. Your audience follows in Japanese.'}</p></div><div className="present-heading-actions">{sessionActions}<div className={`session-status ${live.status}`}><span className="status-dot" />{statusNames[live.status]}{isBusy && <span className="timer">{formatTime(elapsed)}</span>}</div></div></div>
-        <div className="output-layout-toolbar" aria-label="Caption layout">
-          <div><strong>Where should captions go?</strong><span>Choose how the audience sees your content.</span></div>
-          <div className="output-mode-buttons">{([{ id: 'overlay', label: 'Over your apps' }, { id: 'window', label: 'Separate caption window' }, { id: 'presentation', label: 'Slides + caption strip' }] as const).map(choice => <button key={choice.id} className={`button secondary small ${options.outputMode === choice.id ? 'selected' : ''}`} aria-pressed={options.outputMode === choice.id} disabled={choice.id === 'overlay' ? !desktop : choice.id === 'presentation' ? !nativeModes.includes('presentation') : !!desktop && !nativeModes.includes('window')} onClick={() => setOptions(previous => ({ ...previous, outputMode: choice.id, ...(choice.id === 'presentation' ? { displayId: displays.find(display => !display.primary)?.id } : {}) }))}>{choice.label}</button>)}</div>
-          <p className="field-hint">{options.outputMode === 'presentation' ? 'Choose an app or screen to share. Stage fits the whole image beside a reserved caption strip on a separate, extended projector. Your shared app remains controlled on this computer.' : options.outputMode === 'window' ? 'Move and resize the caption window beside a windowed presentation. Works with a mirrored screen. Fullscreen apps use the whole screen, so switch them to windowed mode for this layout.' : 'Floating captions stay above your slides and apps. For space that never covers content, choose Separate caption window or Slides + caption strip.'} {!!desktop && !nativeModes.includes('window') && ' New layout modes need the updated desktop app; this installed version only supports the overlay.'} {!desktop && ' The desktop app adds floating overlays and the extended-projector layout.'}</p>
-          <button className="button primary small" onClick={() => void openOutput()}><ExternalLink size={16} />{overlayOpen ? 'Close caption output' : options.outputMode === 'presentation' ? 'Choose content to share' : options.outputMode === 'window' ? 'Open separate caption window' : 'Show overlay'}</button>
-        </div>
-        <div className="present-layout">
-          <section ref={previewSection} className="preview-section" aria-label="Audience caption preview">
-            <div className="section-toolbar"><div><Monitor size={17} /><strong>Audience preview</strong></div><span className="field-hint">{desktop ? overlayOpen ? 'On-screen captions shown' : 'On-screen captions hidden' : 'Presenter preview'}</span></div>
-            <div className={`stage-preview ${options.position} ${options.outputMode === 'presentation' ? 'reserved' : ''}`}>
-              {options.outputMode === 'presentation' ? <RehearsalSlide /> : <div className="slide-placeholder" aria-hidden="true"><span className="slide-small-line" /><span className="slide-large-line" /><span className="slide-medium-line" /><div className="slide-chart"><span /><span /><span /><span /><span /></div><p>Your slides or live demo</p></div>}
-              <div className="preview-captions" style={{ backgroundColor: `oklch(0.12 0 0 / ${options.opacity})`, '--caption-size': `${previewFontSize}px` } as React.CSSProperties}>
-                {live.status === 'rehearsal' && <span className="rehearsal-label">Rehearsal · Sample text · Microphone off</span>}
-                {interrupted ? <p className="caption-placeholder">{statusNames[live.status]}</p> : (outputPayload.japanese || outputPayload.partialJapanese) ? <>
-                  {options.showEnglish && <p className="caption-source">{outputPayload.english}</p>}
-                  <CaptionText final={outputPayload.japanese} partial={outputPayload.partialJapanese} language={outputPayload.translationLanguage} stableLines={outputPayload.stableLines} />
-                </> : <div className="empty-caption"><CaptionsIcon size={26} /><p>Translated captions will appear here</p><span>{live.status === 'live' ? 'Listening for your voice…' : 'Run a rehearsal to check the layout.'}</span></div>}
-              </div>
-            </div>
-            <div className="preview-footnote"><span><span className={`status-dot ${isBusy ? 'on' : ''}`} /> {live.status === 'rehearsal' ? 'Sample captions. No audio is recorded or sent.' : live.status === 'live' ? 'Microphone audio is being sent to Soniox.' : ['connecting', 'reconnecting'].includes(live.status) ? 'Microphone active. Connecting to the translation service…' : live.status === 'stopping' ? 'Ending the session and releasing the microphone…' : 'Your microphone is off unless you run a check.'}</span><button className="text-button" disabled={!outputPayload.english && !outputPayload.japanese && !outputPayload.partialJapanese} onClick={live.clear}>Clear captions</button></div>
-            {displayMode === 'readable' && <p className="readability-note">Easy to read · Finalized phrases in fixed lines. A short display buffer reduces jumping text.{(live.audienceCaptions.displayLagMs ?? 0) > 3000 && ' Caption delivery is arriving in bursts; the display is catching up.'}</p>}
-            {meeting.meeting && <div className="meeting-save-bar"><div><FileText size={18} /><span><strong>{meeting.meeting.status === 'recording' ? 'Saving this meeting' : meeting.pending ? 'Finishing meeting upload' : 'Meeting saved'}</strong><small>{meeting.pending ? `${meeting.pending} pending upload${meeting.pending === 1 ? '' : 's'}` : `${meeting.meeting.entryCount} finalized entries`} · Shared with your team</small></span></div><div>{meeting.meeting.status === 'recording' && <button className="button secondary small" onClick={() => void meeting.bookmark().then(() => setNotice('Moment marked. Find it in this meeting’s transcript.')).catch(error => setNotice((error as Error).message))}><Bookmark size={15} /> Mark moment</button>}<button className="text-button" onClick={() => { setSelectedMeeting(meeting.meeting!.id); setTab('meetings'); }}>{meeting.meeting.status === 'recording' ? 'View transcript' : 'Review & summarize'}</button></div></div>}
-            {meeting.error && <div className="notice error" role="alert"><span>{meeting.error}</span><button className="text-button" onClick={() => void meeting.retry()}>Retry saving</button></div>}
-            <div className="transcript-section"><div className="transcript-label"><AudioLines size={17} /> Spoken text <span>Presenter view only</span></div><p className={presenterSpeech ? '' : 'muted'}>{presenterSpeech || 'Recognized speech will appear here once the session starts.'}</p></div>
-            {(live.error || micError) && <div className="notice error" role="alert">{live.error || micError}</div>}
-            {live.muted && <div className="notice" role="alert">Your microphone is muted by the system or device.</div>}
-            {live.status === 'live' && live.lastUpdate && now - live.lastUpdate > 20000 && <div className="notice" role="status">No new words recently. If you are speaking, check the microphone and connection.</div>}
-          </section>
-          <aside className="session-controls" aria-label="Presentation controls">
-            <div className="controls-heading"><h2>Session controls</h2><SlidersHorizontal size={18} /></div>
-            <label className="field-label" htmlFor="translation-mode">Translation</label>
-            <select id="translation-mode" value={mode} disabled={isBusy || starting} aria-describedby="translation-mode-hint" onChange={event => setMode(event.target.value as TranslationMode)}><option value="auto">Automatic · English ↔ Japanese</option><option value="en_to_ja">English → Japanese</option><option value="ja_to_en">Japanese → English</option></select>
-            <p className="field-hint" id="translation-mode-hint">{mode === 'auto' ? 'Follows the sentence language, including mixed-language speech. Short phrases may be misidentified; choose a fixed direction if needed.' : 'Captions stay in the selected audience language. English names and technical terms can still appear in Japanese speech.'} Choose before starting captions.</p>
-            <label className="field-label" htmlFor="microphone">Microphone</label>
-            <div className="select-with-icon"><Mic size={17} /><select id="microphone" value={deviceId} disabled={isBusy || micChecking} onChange={event => setDeviceId(event.target.value)}><option value="default">System default microphone</option>{devices.filter(device => device.deviceId && device.deviceId !== 'default').map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></div>
-            <div className="mic-check-row"><div className="level-meter" aria-label={micChecking ? 'Microphone input level' : 'Microphone check inactive'}>{Array.from({ length: 16 }, (_, index) => <i key={index} className={micChecking && index / 16 < micLevel ? 'lit' : ''} />)}</div><button className="text-button" disabled={isBusy} onClick={checkMic}>{micChecking ? 'Stop check' : 'Check mic'}</button></div>
-            {micChecking && <p className="field-hint">Local check only. Stops after 10 seconds.</p>}
-            <label className="field-label" htmlFor="caption-display-mode">Audience reading</label>
-            <select id="caption-display-mode" value={displayMode} disabled={isBusy || starting} onChange={event => setDisplayMode(event.target.value as 'readable' | 'drafts')}><option value="readable">Easy to read</option><option value="drafts">Live drafts · quickest updates</option></select>
-            <p className="field-hint">{displayMode === 'readable' ? 'Keeps finalized phrases still for reading, with a short display buffer. Recognition continues at full speed.' : 'Shows provisional words immediately. Wording and line breaks can change as the translation develops.'}</p>
-            <label className="field-label" htmlFor="caption-pace">Speech processing</label>
-            <select id="caption-pace" value={pace} disabled={isBusy || starting} aria-describedby="caption-pace-hint" onChange={event => setPace(event.target.value as CaptionPace)}><option value="responsive">Responsive</option><option value="context">More context</option></select>
-            <p className="field-hint" id="caption-pace-hint">{pace === 'responsive' ? 'Earlier phrase boundaries. Draft words may change as you speak.' : 'Waits longer for complete phrases. Useful if you pause mid-sentence.'} Choose before starting captions.</p>
-            <div className="control-separator" />
-            <label className="field-label" htmlFor="display">Caption output</label>
-            {desktop ? <select id="display" value={options.displayId ?? ''} onFocus={() => void desktop.getDisplays().then(setDisplays)} onChange={event => setOptions({ ...options, displayId: event.target.value || undefined })}><option value="">Primary display</option>{displays.map(display => <option key={display.id} value={display.id}>{display.label} · {display.width} × {display.height}</option>)}</select> : <div className="browser-output"><Monitor size={18} /><div><strong>Separate browser window</strong><span>Use the desktop app to float captions over slides.</span></div></div>}
-            <button className="button secondary full" onClick={() => void openOutput()} aria-pressed={overlayOpen}><ExternalLink size={17} />{overlayOpen ? 'Hide captions' : desktop ? 'Show captions on screen' : 'Open caption window'}</button>
-            {desktop && <p className="field-hint">{shortcutRegistered === false ? 'Shortcut unavailable: another app may be using it. Use this button' : `${shortcut} · ${shortcutRegistered === null ? 'hide/show an open caption window' : 'show/hide captions'}`}. Hiding keeps the microphone on.</p>}
-            <p className="field-hint">Captions clear after the last phrase has had time to be read. Listening continues; meeting history stays saved.</p>
-            <div className="field-pair"><div><label className="field-label" htmlFor="position">Position</label><select id="position" value={options.position} onChange={event => setOptions({ ...options, position: event.target.value as 'top' | 'bottom' })}><option value="bottom">Bottom</option><option value="top">Top</option></select></div><div><label className="field-label" htmlFor="font-size">Text size (px)</label><input id="font-size" type="number" min="24" max="96" step="1" inputMode="numeric" value={fontSizeInput} aria-describedby="font-size-hint" onChange={event => changeFontSize(event.target.value)} onBlur={finishFontSize} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><p className="field-hint" id="font-size-hint">24–96 px</p></div></div>
-            <label className="check-label"><input type="checkbox" checked={options.showEnglish} onChange={event => setOptions({ ...options, showEnglish: event.target.checked })} /><span>Also show spoken text</span></label>
-            <label className="range-label" htmlFor="opacity"><span>Background opacity</span><output>{Math.round(options.opacity * 100)}%</output></label><input id="opacity" type="range" min="0.4" max="1" step="0.05" value={options.opacity} onChange={event => setOptions({ ...options, opacity: Number(event.target.value) })} />
-            <div className="control-separator" />
-            <p className="control-note">{ready ? 'Live audio goes to Soniox. Finalized speech and translations are saved on your team server; audio is not stored by Stage.' : 'Rehearsal works without an account or microphone.'}</p>
-          </aside>
-        </div>
-        <div className="presentation-tip"><Volume2 size={18} /><p>A headset or presenter microphone gives the clearest captions. Do a short rehearsal on the actual projected screen.</p><button className="text-button" onClick={() => setTab('setup')}>Setup guide <ChevronRight size={16} /></button></div>
-      </>}
-      {tab === 'meetings' && <MeetingHistory authenticated={authorized} onConnect={() => setConnectOpen(true)} selectedId={selectedMeeting} onSelect={setSelectedMeeting} summaryAvailable={summaryAvailable} />}
-      {tab === 'vocabulary' && <Vocabulary team={team} authenticated={authorized} onConnect={() => setConnectOpen(true)} onSaved={setTeam} />}
-      {tab === 'setup' && <SetupGuide session={session} desktop={!!desktop} onConnect={() => setConnectOpen(true)} onRehearse={() => { setTab('present'); void startPresentation(true); }} />}
-      <footer><span>Stage <span className="footer-dot">·</span> {modeLabel}</span><span>{session?.provider.configured ? `Soniox · ${session.provider.region === 'jp' ? 'Japan' : session.provider.region === 'eu' ? 'Europe' : 'Global'} region` : 'Live translation not connected'} <span className="footer-dot">·</span> Meeting transcripts shared with your team</span></footer>
-    </div>
-    <dialog ref={dialogRef} className="connect-dialog" onCancel={() => { setConnectOpen(false); setAccessCode(''); }} onClose={() => setConnectOpen(false)}><form onSubmit={unlock}><div className="dialog-heading"><span className="brand-mark"><KeyRound size={22} /></span><button type="button" className="icon-button" onClick={() => { setConnectOpen(false); setAccessCode(''); }} aria-label="Close team connection"><X size={20} /></button></div><h2>Connect your team</h2><p>Enter the shared access code from your organizer. This laptop will stay connected for seven days.</p><label className="field-label" htmlFor="team-code">Team access code</label><input autoFocus id="team-code" type="password" autoComplete="off" required maxLength={256} value={accessCode} onChange={event => setAccessCode(event.target.value)} placeholder="Enter your team code" />{connectError && <p className="form-error" role="alert">{connectError}</p>}<button className="button primary full" disabled={connecting}>{connecting ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{connecting ? 'Connecting…' : 'Connect team'}</button><p className="dialog-footnote">No individual account needed. Your organizer manages the translation account.</p></form></dialog>
-  </div>;
-}
-
-function Vocabulary({ team, authenticated, onConnect, onSaved }: { team: Team; authenticated: boolean; onConnect: () => void; onSaved: (team: Team) => void }) {
-  const [name, setName] = useState(team.name);
-  const [terms, setTerms] = useState(team.glossary.terms.join('\n'));
-  const [translations, setTranslations] = useState(team.glossary.translationTerms.map(pair => `${pair.source} = ${pair.target}`).join('\n'));
-  const [background, setBackground] = useState(team.glossary.background);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  useEffect(() => { setName(team.name); setTerms(team.glossary.terms.join('\n')); setTranslations(team.glossary.translationTerms.map(pair => `${pair.source} = ${pair.target}`).join('\n')); setBackground(team.glossary.background); }, [team]);
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setError(''); setMessage(''); setSaving(true);
-    try {
-      const next = { name: name.trim(), glossary: { terms: terms.split('\n').map(value => value.trim()).filter(Boolean), translationTerms: parseTranslations(translations), background: background.trim() } };
-      await api('/api/team', { method: 'PATCH', body: JSON.stringify(next) });
-      onSaved(next); setMessage('Saved for the team. New sessions will use these terms.');
-    } catch (failure) { setError((failure as Error).message); }
-    finally { setSaving(false); }
+  const closePanel = useCallback(() => {
+    setPanel(null); setAccessCode(''); setConnectError('');
+    triggerRef.current?.focus();
+  }, []);
+  const togglePanel = (next: Exclude<Panel, null>) => {
+    if (panel === next) { closePanel(); return; }
+    triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPanel(next);
   };
-  return <section className="settings-page"><div className="page-heading"><div><h1>Team vocabulary</h1><p>Give the translator context before anyone takes the stage.</p></div><BookOpen size={28} className="heading-icon" /></div>
-    {!authenticated && <div className="notice"><span>Connect your team to view and edit its shared vocabulary.</span><button className="text-button" onClick={onConnect}>Connect team <ArrowRight size={15} /></button></div>}
-    <form className="vocabulary-form" onSubmit={save}><fieldset disabled={!authenticated || saving}><div className="settings-row"><div><h2>Team name</h2><p>Shown on every presenter’s control screen.</p></div><div><label className="sr-only" htmlFor="team-name">Team name</label><input id="team-name" value={name} onChange={event => setName(event.target.value)} maxLength={80} required /></div></div>
-      <div className="settings-row"><div><h2>Names & technical terms</h2><p>Help recognize products, people, and acronyms. Use one term per line.</p></div><div><label className="sr-only" htmlFor="terms">Names and technical terms</label><textarea id="terms" rows={5} value={terms} onChange={event => setTerms(event.target.value)} placeholder={'Your company name\nYour product name\nA technical acronym'} maxLength={12000} /></div></div>
-      <div className="settings-row"><div><h2>Preferred translations</h2><p>Guide terms in either direction. To keep a name unchanged, use GitHub = GitHub. These are preferences, not guaranteed replacements.</p></div><div><label className="sr-only" htmlFor="translations">Preferred translations</label><textarea id="translations" rows={4} value={translations} onChange={event => setTranslations(event.target.value)} placeholder={'English term = 日本語訳\n日本語の用語 = English translation\nGitHub = GitHub'} maxLength={16000} /><p className="field-hint">One source = target pair per line. Add a separate reverse pair when needed.</p></div></div>
-      <div className="settings-row"><div><h2>Presentation background</h2><p>A short description of what your team is presenting helps with context.</p></div><div><label className="sr-only" htmlFor="background">Presentation background</label><textarea id="background" rows={4} value={background} onChange={event => setBackground(event.target.value)} maxLength={5000} placeholder="For example: A product demonstration for a Japanese engineering team. Keep product names in English." /><span className="character-count">{background.length.toLocaleString()} / 5,000</span></div></div>
-      <div className="form-actions"><span>Shared with everyone who uses your team code.</span><button className="button primary" type="submit">{saving ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{saving ? 'Saving…' : 'Save vocabulary'}</button></div></fieldset>{message && <div className="notice success" role="status"><Check size={18} />{message}</div>}{error && <p className="form-error" role="alert">{error}</p>}</form>
-  </section>;
-}
+  const openWorkspace = async (view: 'meetings' | 'vocabulary' | 'setup', meetingId?: string) => {
+    try {
+      if (desktop?.openWorkspace) await desktop.openWorkspace(view, meetingId);
+      else if (desktop) throw new Error('Update the Stage desktop app to open Meetings, Vocabulary, and Help. Your current captions keep running.');
+      else {
+        const query = new URLSearchParams({ view }); if (meetingId) query.set('meeting', meetingId);
+        if (!window.open(`/workspace?${query}`, 'stage-workspace', 'popup,width=1040,height=780')) throw new Error('Allow pop-ups for Stage to open this window.');
+      }
+      closePanel();
+    } catch (error) { setNotice((error as Error).message); }
+  };
+  const toggleRecording = () => {
+    if (['connecting', 'reconnecting', 'stopping'].includes(live.status) || starting) return;
+    if (isBusy) {
+      if (live.paused) live.resume(); else live.pause();
+    } else void startPresentation();
+  };
+  const endMeeting = async () => {
+    if (!isBusy || live.status === 'stopping') return;
+    closePanel(); await live.stop();
+  };
+  const markMoment = async () => {
+    try { await meeting.bookmark(); setMarked(true); }
+    catch (error) { setNotice((error as Error).message); }
+  };
+  useEffect(() => {
+    saveControllerPreferences({ deviceId, pace, mode, displayMode, options });
+  }, [deviceId, pace, mode, displayMode, options]);
+  useEffect(() => {
+    if (!marked) return;
+    const timer = setTimeout(() => setMarked(false), 2400); return () => clearTimeout(timer);
+  }, [marked]);
+  useEffect(() => { if (panel !== 'settings') stopMicCheck(); }, [panel]);
+  useEffect(() => {
+    if (panel !== 'connect') { setAccessCode(''); setConnectError(''); }
+    if (!panel) return;
+    const focus = requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(panel === 'connect' ? 'input' : 'button, select, input')?.focus());
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); closePanel(); } };
+    const outside = (event: PointerEvent) => { if (!remoteRef.current?.contains(event.target as Node)) closePanel(); };
+    window.addEventListener('keydown', escape); document.addEventListener('pointerdown', outside);
+    return () => { cancelAnimationFrame(focus); window.removeEventListener('keydown', escape); document.removeEventListener('pointerdown', outside); };
+  }, [panel, closePanel]);
+  useEffect(() => {
+    document.documentElement.classList.add('controller-route');
+    return () => document.documentElement.classList.remove('controller-route');
+  }, []);
+  useEffect(() => {
+    document.documentElement.classList.toggle('native-controller', nativeCompact);
+    return () => document.documentElement.classList.remove('native-controller');
+  }, [nativeCompact]);
+  useEffect(() => {
+    const node = remoteRef.current;
+    if (!node || !nativeCompact || !desktop?.setControllerLayout) return;
+    const resize = () => void desktop.setControllerLayout!({ height: Math.ceil(node.getBoundingClientRect().height) + 16 }).catch(() => {});
+    const observer = new ResizeObserver(resize); observer.observe(node); resize();
+    return () => observer.disconnect();
+  }, [nativeCompact, desktop]);
+  const controllerAction = useRef({ toggleRecording, endMeeting });
+  controllerAction.current = { toggleRecording, endMeeting };
+  useEffect(() => desktop?.onControllerAction?.(action => {
+    if (action === 'settings' || action === 'output') setPanel(action);
+    else if (action === 'toggle-recording') controllerAction.current.toggleRecording();
+    else if (action === 'end-meeting') void controllerAction.current.endMeeting();
+  }), [desktop]);
+  useEffect(() => {
+    desktop?.updateControllerState?.({ status: live.status, paused: live.paused, pending: meeting.pending });
+  }, [desktop, live.status, live.paused, meeting.pending]);
 
-function SetupGuide({ session, desktop, onConnect, onRehearse }: { session: Session | null; desktop: boolean; onConnect: () => void; onRehearse: () => void }) {
-  return <section className="settings-page"><div className="page-heading"><div><h1>Ready for the room</h1><p>A short check before your first presentation.</p></div><Settings2 className="heading-icon" size={28} /></div>
-    <ol className="setup-steps"><li><span className="step-number">1</span><div><h2>Connect this laptop</h2><p>Your organizer shares the app, a team server address, and one access code. Enter the code once. It is remembered on this laptop for seven days.</p>{session?.authenticated ? <span className="inline-success"><Check size={16} /> Team connected</span> : <button className="button secondary small" onClick={onConnect}><KeyRound size={15} /> Enter team code</button>}</div></li>
-      <li><span className="step-number">2</span><div><h2>Choose your microphone and screen</h2><p>Select your headset or presenter microphone. In the desktop app, choose the projected display under Caption output. Choose Over your apps for a floating overlay, Separate caption window for a movable window beside your content, or Slides + caption strip to fit captured content on an extended projector.</p><p className="setup-detail">{desktop ? 'Use Cmd/Ctrl + Shift + H to hide or show the native caption window.' : 'You are in the browser preview. It can open a separate caption page; floating over other applications requires the desktop app.'}</p></div></li>
-      <li><span className="step-number">3</span><div><h2>Rehearse on the projector</h2><p>Run a rehearsal to open captions automatically in the desktop app. Check that the back row can read them, then switch between your slides, browser, and demo. Rehearsal uses sample text and keeps your microphone off.</p><button className="button secondary small" onClick={onRehearse}><Play size={15} /> Run a rehearsal</button></div></li>
-      <li><span className="step-number">4</span><div><h2>Start captions when you are ready</h2><p>Choose automatic English ↔ Japanese translation, or a fixed audience language. Live mode sends microphone audio to Soniox over the internet. Early wording and detected language may change as more context arrives. Stop captions when you finish.</p></div></li></ol>
-    <div className="organizer-note"><Globe2 size={22} /><div><h2>For the organizer</h2><p>{session?.provider.configured ? 'The translation service is configured. Use a real speaker rehearsal to check accent accuracy and delay before the event.' : 'The server needs a Soniox API key before live translation can start. Set SONIOX_API_KEY and SONIOX_REGION on the server, then restart it. Presenters never enter this key.'}</p><p>Publish the team server over HTTPS, and distribute an installer for each operating system. Japan-region processing requires an enabled Soniox regional project. Stage saves finalized speech, translations, and marked moments on the team server. Everyone with the team code can read and export them. Stage does not store microphone audio. Let participants know before starting a meeting.</p></div></div>
-  </section>;
+  const saving = meeting.pending > 0 || meeting.saving;
+  const statusLabel = live.paused ? 'Paused' : starting ? 'Preparing' : live.status === 'stopping' || (!isBusy && saving) ? 'Saving' : statusNames[live.status];
+  const inputLocked = isBusy || starting;
+  const canPause = live.status === 'live' || live.status === 'rehearsal';
+  const stateTitle = live.paused ? live.status === 'rehearsal' ? 'Rehearsal paused · Microphone off' : 'Speech paused. End to release the mic.' : live.status === 'rehearsal' ? `Sample captions · Microphone off · ${formatTime(elapsed)}` : isBusy ? `Microphone active · ${formatTime(elapsed)}` : saving ? 'Saving the transcript to your team server.' : 'Microphone off';
+  const panelTitles: Record<Exclude<Panel, null>, string> = { language: 'Languages', output: 'Caption output', more: 'Stage', settings: 'Settings', connect: 'Connect team' };
+  const extendedAvailable = displays.length > 1;
+  const savedMeeting = meeting.meeting && meeting.meeting.status !== 'recording' && !saving && !meeting.error && !isBusy;
+
+  return <main className={`controller-page ${nativeCompact ? 'is-native' : ''}`}>
+    <div className="remote-shell" ref={remoteRef}>
+      {!desktop && <span className="controller-preview">{localPreview ? 'Preview' : 'Browser'}</span>}
+      <div className="remote-bar" aria-label="Stage controls">
+        <span className="remote-drag" title={desktop ? 'Drag Stage' : 'Stage'} aria-hidden="true"><GripVertical size={16} /></span>
+        <button className="remote-start" disabled={starting || (isBusy && !canPause)} onClick={toggleRecording} aria-label={isBusy ? live.paused ? 'Resume captions' : 'Pause captions' : 'Start captions'} title={isBusy ? live.paused ? 'Resume this meeting' : 'Pause speech, keep this meeting open' : 'Start live captions'}>
+          {starting || (isBusy && !canPause) ? <LoaderCircle size={17} className="spin" /> : isBusy && !live.paused ? <Pause size={16} /> : live.paused ? <Play size={16} /> : <Mic size={17} />}
+          <span>{isBusy ? live.paused ? 'Resume' : 'Pause' : 'Start'}</span>
+        </button>
+        <span className={`remote-status ${live.paused ? 'paused' : live.status}`} title={stateTitle} aria-live="polite"><i aria-hidden="true" />{statusLabel}</span>
+        <span className="remote-divider" aria-hidden="true" />
+        <button className="remote-language" onClick={() => togglePanel('language')} title="Translation languages" aria-label={`Translation languages: ${modeLabel}`} aria-expanded={panel === 'language'} aria-controls={panel === 'language' ? 'remote-panel' : undefined}>{modeLabel}</button>
+        <button className={`remote-icon ${panel === 'output' ? 'selected' : ''}`} onClick={() => togglePanel('output')} title="Caption output" aria-label="Caption output" aria-expanded={panel === 'output'} aria-controls={panel === 'output' ? 'remote-panel' : undefined}><PanelsTopLeft size={18} /></button>
+        <button className={`remote-icon ${marked ? 'marked' : ''}`} disabled={!meeting.meeting || meeting.meeting.status !== 'recording' || live.status === 'rehearsal'} onClick={() => void markMoment()} title={marked ? 'Moment marked' : 'Mark moment'} aria-label={marked ? 'Moment marked' : 'Mark moment'}>{marked ? <Check size={18} /> : <Bookmark size={18} />}</button>
+        <button className={`remote-icon ${panel === 'more' ? 'selected' : ''}`} onClick={() => togglePanel('more')} title="More" aria-label="More options" aria-expanded={panel === 'more'} aria-controls={panel === 'more' ? 'remote-panel' : undefined}><Ellipsis size={20} /></button>
+      </div>
+      {panel && <section className={`remote-panel ${panel === 'more' ? 'remote-menu' : ''}`} ref={panelRef} id="remote-panel" aria-label={panelTitles[panel]}>
+        <div className="remote-panel-heading">{panel === 'settings' && <button className="icon-button" aria-label="Back to menu" onClick={() => setPanel('more')}><ArrowLeft size={16} /></button>}<h1>{panelTitles[panel]}</h1><button className="icon-button" aria-label="Close panel" onClick={closePanel}><X size={16} /></button></div>
+        {panel === 'language' && <>
+          <div className="remote-choices">{([{ id: 'auto', label: 'English ⇄ Japanese', detail: 'Automatic' }, { id: 'en_to_ja', label: 'English → Japanese', detail: '' }, { id: 'ja_to_en', label: 'Japanese → English', detail: '' }] as const).map(item => <button key={item.id} className={mode === item.id ? 'chosen' : ''} disabled={inputLocked} aria-pressed={mode === item.id} onClick={() => { setMode(item.id); closePanel(); }}><ArrowLeftRight size={17} /><span>{item.label}{item.detail && <small>{item.detail}</small>}</span>{mode === item.id && <Check size={16} />}</button>)}</div>
+          <p className="remote-hint">{inputLocked ? 'End this meeting to change languages.' : 'Automatic follows the language of each sentence.'}</p>
+        </>}
+        {panel === 'output' && <>
+          <div className="remote-choices output-choices">{([{ id: 'overlay', label: 'Overlay', detail: 'Above your apps', icon: PanelsTopLeft }, { id: 'window', label: 'Window', detail: 'Beside windowed slides', icon: Monitor }, { id: 'presentation', label: 'Slides + strip', detail: 'A separate extended projector', icon: Monitor }] as const).map(item => <button key={item.id} className={options.outputMode === item.id ? 'chosen' : ''} disabled={item.id === 'overlay' ? !desktop : item.id === 'presentation' ? !nativeModes.includes('presentation') || !extendedAvailable : !!desktop && !nativeModes.includes('window')} aria-pressed={options.outputMode === item.id} onClick={() => setOptions(previous => ({ ...previous, outputMode: item.id, ...(item.id === 'presentation' ? { displayId: displays.find(display => !display.primary)?.id } : {}) }))}><item.icon size={18} /><span>{item.label}<small>{item.detail}</small></span>{options.outputMode === item.id && <Check size={16} />}</button>)}</div>
+          {desktop ? <label className="remote-field"><span>Screen</span><select aria-label="Caption screen" value={options.displayId ?? ''} onFocus={() => void desktop.getDisplays().then(setDisplays)} onChange={event => setOptions(previous => ({ ...previous, displayId: event.target.value || undefined }))}><option value="">Primary display</option>{displays.filter(display => options.outputMode !== 'presentation' || !display.primary).map(display => <option key={display.id} value={display.id}>{display.label}</option>)}</select></label> : <p className="remote-hint">Desktop Stage adds overlays and projector sharing.</p>}
+          {desktop && !nativeModes.includes('window') && <p className="remote-hint">Update Stage to use Window and Slides + strip.</p>}
+          {desktop && nativeModes.includes('presentation') && !extendedAvailable && <p className="remote-hint">Connect an extended display for Slides + strip.</p>}
+          <button className="button primary full" onClick={() => void openOutput()}>{overlayOpen ? <EyeOff size={17} /> : <Eye size={17} />}{overlayOpen ? 'Hide captions' : options.outputMode === 'presentation' ? 'Choose content' : 'Show captions'}</button>
+          <p className="remote-hint">{options.outputMode === 'window' ? 'Use windowed slides to leave room for captions.' : options.outputMode === 'presentation' ? 'Stage shares your chosen app with space for captions.' : desktop ? shortcutRegistered === false ? 'Caption shortcut unavailable. Use Show captions.' : `${shortcut} to show or hide captions.` : 'Allow pop-ups to open the caption window.'}{isBusy && ' Hiding keeps speech active.'}</p>
+        </>}
+        {panel === 'more' && <>
+          <button className="remote-menu-item" onClick={() => setPanel('settings')}><Settings2 size={17} /><span>Settings</span><ChevronRight size={15} /></button>
+          <button className="remote-menu-item" onClick={() => void openWorkspace('meetings', meeting.meeting?.id)}><FileText size={17} /><span>Meetings</span></button>
+          <button className="remote-menu-item" onClick={() => void openWorkspace('vocabulary')}><BookOpen size={17} /><span>Vocabulary</span></button>
+          <button className="remote-menu-item" disabled={inputLocked} onClick={() => void startPresentation(true)}><Play size={17} /><span>Rehearse</span><small>Mic off</small></button>
+          <button className="remote-menu-item" onClick={() => void openWorkspace('setup')}><CircleHelp size={17} /><span>Help</span></button>
+          {desktop?.hideController && <button className="remote-menu-item" onClick={() => { closePanel(); void desktop.hideController!(); }}><EyeOff size={17} /><span>Hide remote</span><small>{controllerShortcut ? /Mac/i.test(navigator.platform) ? '⌘⇧B' : 'Ctrl⇧B' : 'Tray'}</small></button>}
+          <div className="remote-separator" />
+          {isBusy ? <button className="remote-menu-item destructive" disabled={live.status === 'stopping'} onClick={() => void endMeeting()}><CircleStop size={17} /><span>{live.status === 'rehearsal' ? 'End rehearsal' : 'End & save'}</span><small>{formatTime(elapsed)}</small></button> : <button className="remote-menu-item" onClick={() => setPanel('connect')}><KeyRound size={17} /><span>{authorized ? team.name : 'Connect team'}</span>{authorized && <Check size={16} />}</button>}
+          <p className="remote-hint privacy-note">{isBusy && live.status !== 'rehearsal' ? 'Transcript shared with your team.' : 'Live transcripts are shared with your team.'}</p>
+        </>}
+        {panel === 'settings' && <>
+          <label className="remote-field stacked"><span>Microphone</span><select aria-label="Microphone" value={deviceId} disabled={inputLocked || micChecking} onChange={event => setDeviceId(event.target.value)}><option value="default">System default</option>{devices.filter(device => device.deviceId && device.deviceId !== 'default').map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></label>
+          <div className="mic-check-row"><div className="level-meter" aria-label={micChecking ? 'Microphone input level' : 'Microphone check inactive'}>{Array.from({ length: 20 }, (_, index) => <i key={index} className={micChecking && index / 20 < micLevel ? 'lit' : ''} />)}</div><button className="text-button" disabled={inputLocked} onClick={() => void checkMic()}>{micChecking ? 'Stop check' : 'Check mic'}</button></div>
+          {micChecking && <p className="remote-hint" role="status">Listening locally · Stops in 10 seconds</p>}
+          <details className="remote-details" open><summary>Caption style</summary><div className="remote-detail-fields">
+            <label className="remote-field"><span>Text size</span><div className="size-field"><input aria-label="Text size in pixels" title="24–96 px" type="number" min="24" max="96" step="1" inputMode="numeric" value={fontSizeInput} onChange={event => changeFontSize(event.target.value)} onBlur={finishFontSize} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><span>px</span></div></label>
+            <label className="remote-field"><span>Position</span><select aria-label="Caption position" value={options.position} onChange={event => setOptions(previous => ({ ...previous, position: event.target.value as 'top' | 'bottom' }))}><option value="bottom">Bottom</option><option value="top">Top</option></select></label>
+            <label className="remote-field opacity-field"><span>Background <small>{Math.round(options.opacity * 100)}%</small></span><input aria-label="Background opacity" type="range" min="0.4" max="1" step="0.05" value={options.opacity} onChange={event => setOptions(previous => ({ ...previous, opacity: Number(event.target.value) }))} /></label>
+            <label className="check-label"><input type="checkbox" checked={options.showEnglish} onChange={event => setOptions(previous => ({ ...previous, showEnglish: event.target.checked }))} /><span>Also show spoken text</span></label>
+          </div></details>
+          <details className="remote-details"><summary>Reading & speed</summary><div className="remote-detail-fields">
+            <label className="remote-field"><span>Reading</span><select aria-label="Audience reading" value={displayMode} disabled={inputLocked} onChange={event => setDisplayMode(event.target.value as 'readable' | 'drafts')}><option value="readable">Steady phrases</option><option value="drafts">Live drafts</option></select></label>
+            <p className="remote-hint">{displayMode === 'readable' ? 'Final phrases stay still for easier reading.' : 'Fast updates. Words can change while you speak.'}</p>
+            <label className="remote-field"><span>Processing</span><select aria-label="Speech processing" value={pace} disabled={inputLocked} onChange={event => setPace(event.target.value as CaptionPace)}><option value="responsive">Responsive</option><option value="context">More context</option></select></label>
+            {inputLocked && <p className="remote-hint">End this meeting to change reading or processing.</p>}
+          </div></details>
+          <button className="remote-menu-item" disabled={!outputPayload.english && !outputPayload.japanese && !outputPayload.partialJapanese} onClick={live.clear}><X size={16} /><span>Clear visible captions</span></button>
+          <button className="remote-menu-item" onClick={() => setPanel('connect')}><KeyRound size={16} /><span>{authorized ? team.name : 'Connect team'}</span><ChevronRight size={15} /></button>
+        </>}
+        {panel === 'connect' && (authorized ? <>
+          <div className="remote-team"><span className="status-dot on" /><strong>{team.name}</strong><span>Connected</span></div>
+          <p className="remote-hint">Live audio goes to Soniox. Transcripts are shared with everyone holding the team code.</p>
+          <button className="button secondary full" disabled={inputLocked || saving} onClick={() => void logout()}><LogOut size={16} />Disconnect this computer</button>
+          {(inputLocked || saving) && <p className="remote-hint">End and save this meeting before disconnecting.</p>}
+        </> : <form onSubmit={unlock}>
+          <label className="field-label" htmlFor="team-code">Team access code</label><input id="team-code" type="password" autoComplete="off" required maxLength={256} value={accessCode} onChange={event => setAccessCode(event.target.value)} placeholder="From your organizer" />
+          {connectError && <p className="form-error" role="alert">{connectError}</p>}
+          <button className="button primary full" disabled={connecting}>{connecting ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />}{connecting ? 'Connecting…' : 'Connect'}</button>
+          <p className="remote-hint">Shared access for 7 days. No individual account.</p>
+        </form>)}
+      </section>}
+      {notice && <div className="remote-alert" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={15} /></button></div>}
+      {serverError && <div className="remote-alert error" role="alert"><span>{serverError}</span><button className="text-button" onClick={() => void refresh()}>Retry</button></div>}
+      {meeting.error && <div className="remote-alert error" role="alert"><span>{meeting.error}</span><button className="text-button" onClick={() => void meeting.retry()}>Retry saving</button></div>}
+      {(live.error || micError) && <div className="remote-alert error" role="alert"><span>{live.error || micError}</span><button className="text-button" onClick={() => setPanel('settings')}>Settings</button></div>}
+      {live.muted && !live.paused && <div className="remote-alert error" role="alert">Your microphone is muted by the system or device.</div>}
+      {live.status === 'live' && !live.paused && live.lastUpdate && now - live.lastUpdate > 20000 && <div className="remote-alert" role="status"><span>No new words. Speaking?</span><button className="text-button" onClick={() => setPanel('settings')}>Check mic</button></div>}
+      {live.paused && <div className="remote-footnote"><span>{live.status === 'rehearsal' ? 'Rehearsal paused · Microphone off' : 'Speech paused. End to release the mic.'}</span><button className="text-button" onClick={() => void endMeeting()}>{live.status === 'rehearsal' ? 'End rehearsal' : 'End & save'}</button></div>}
+      {isBusy && !overlayOpen && <div className="remote-footnote"><span>Captions hidden</span><button className="text-button" onClick={() => void openOutput()}>Show</button></div>}
+      {savedMeeting && !savedDismissed && <div className="remote-footnote" role="status"><span><Check size={13} /> Meeting saved</span><button className="text-button" onClick={() => void openWorkspace('meetings', meeting.meeting!.id)}>Review</button><button className="icon-button" aria-label="Dismiss saved meeting" onClick={() => setSavedDismissed(true)}><X size={13} /></button></div>}
+      <span className="sr-only" role="status">{marked ? 'Moment marked' : ''}</span>
+    </div>
+  </main>;
 }

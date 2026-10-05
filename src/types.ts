@@ -53,11 +53,18 @@ export interface MeetingSummary {
   openQuestions: { text: string; evidenceEntryIds: string[] }[];
 }
 export type SummaryResult = { ok: true; summary: MeetingSummary } | { ok: false; error: { code: string; message: string; recoverable: true } };
+export type ControllerAction = 'settings' | 'output' | 'toggle-recording' | 'end-meeting';
+export type WorkspaceView = 'meetings' | 'vocabulary' | 'setup';
 declare global {
   interface Window {
     stageDesktop?: {
       isDesktop: true;
-      getCapabilities?(): Promise<{ apiVersion: number; outputModes: string[]; stableLines: boolean; saveMeetingExport?: boolean; summaryWorker?: boolean }>;
+      getCapabilities?(): Promise<{ apiVersion: number; outputModes: string[]; stableLines: boolean; saveMeetingExport?: boolean; summaryWorker?: boolean; compactController?: boolean; controllerShortcutRegistered?: boolean }>;
+      setControllerLayout?(layout: { height: number }): Promise<void>;
+      hideController?(): Promise<void>;
+      updateControllerState?(state: { status: CaptionStatus; paused: boolean; pending: number }): void;
+      onControllerAction?(callback: (action: ControllerAction) => void): () => void;
+      openWorkspace?(view: WorkspaceView, meetingId?: string): Promise<void>;
       saveMeetingExport?(data: { filename: string; text: string; format: 'json' | 'md' }): Promise<{ saved: boolean }>;
       cancelSummary?(): Promise<void>;
       summarizeMeeting?(data: import('./lib/meetings').MeetingExport): Promise<SummaryResult>;
@@ -65,6 +72,7 @@ declare global {
       openOverlay(options: OverlayOptions): Promise<void>;
       updateOverlay(payload: OverlayPayload): void;
       closeOverlay(): Promise<void>;
+      toggleOverlay?(): Promise<void>;
       onOverlayClosed(callback: () => void): () => void;
       configureOverlay?(options: OverlayOptions): Promise<void>;
       getOverlayState?(): Promise<OverlayState>;
