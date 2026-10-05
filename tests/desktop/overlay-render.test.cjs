@@ -9,7 +9,7 @@ const { normalizeCaptionPayload } = require('../../electron/guards.cjs');
 // the installed app or touching a presenter's screen.
 function overlayFixture() {
   const elements = Object.fromEntries(['caption-card', 'japanese', 'committed', 'partial', 'english', 'caption-status']
-    .map(id => [id, { textContent: '', hidden: false, dataset: {}, lang: '', scrollHeight: 0, scrollWidth: 0 }]));
+    .map(id => [id, { textContent: '', hidden: false, dataset: {}, style: {}, lang: '', scrollHeight: 0, scrollWidth: 0 }]));
   const properties = new Map();
   let update;
   vm.runInNewContext(readFileSync(join(__dirname, '../../electron/overlay.js'), 'utf8'), {
@@ -63,4 +63,30 @@ test('legacy caption payloads still render Japanese without new language metadat
   assert.equal(elements.japanese.lang, 'ja');
   assert.equal(elements.committed.textContent, 'こんにちは。');
   assert.equal(elements.partial.textContent, '');
+});
+
+test('stable captions occupy two anchored rows and never scroll to a moving tail', () => {
+  const { elements, update } = overlayFixture();
+  elements.japanese.scrollHeight = 1000;
+  elements.japanese.scrollTop = 500;
+  update({ english: '', japanese: 'Legacy text ignored', partialJapanese: 'Draft ignored',
+    stableLines: ['Already read words', 'Only this line grows'], status: 'live' });
+  assert.equal(elements.committed.textContent, 'Already read words');
+  assert.equal(elements.partial.textContent, 'Only this line grows');
+  assert.equal(elements.japanese.scrollTop, 0);
+  assert.equal(elements['caption-card'].hidden, false);
+  update({ english: '', japanese: 'Legacy text ignored', stableLines: ['', ''], status: 'live' });
+  assert.equal(elements['caption-card'].hidden, true);
+});
+
+
+test('stable lines scale together to fit narrow native output without wrapping or dropping words', () => {
+  const { elements, update } = overlayFixture();
+  elements.japanese.clientWidth = 300;
+  elements.committed.scrollWidth = 600;
+  elements.partial.scrollWidth = 450;
+  update({ english: '', japanese: '', stableLines: ['A long line remains whole', 'Both rows share a fitted size'], status: 'live' });
+  assert.equal(elements.japanese.style.fontSize, '21px');
+  assert.equal(elements.committed.textContent, 'A long line remains whole');
+  assert.equal(elements.partial.textContent, 'Both rows share a fitted size');
 });

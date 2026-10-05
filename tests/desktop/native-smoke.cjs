@@ -58,7 +58,8 @@ async function smoke() {
   assert.ok(toggle, 'The caption shortcut must have an application menu fallback.');
   const initialState = await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()');
   assert.deepEqual(initialState, { open: false, visible: false,
-    shortcutRegistered: globalShortcut.isRegistered('CommandOrControl+Shift+H') });
+    shortcutRegistered: globalShortcut.isRegistered('CommandOrControl+Shift+H'),
+    outputMode: 'overlay', presentationStatus: null });
   await main.webContents.executeJavaScript(`(() => {
     window.overlayStates = [];
     window.closedEvents = 0;
@@ -197,6 +198,51 @@ async function smoke() {
   await eventually(() => reopened.isDestroyed());
   assert.equal(await main.webContents.executeJavaScript('window.overlayStates.length'), states.length,
     'The bridge must remove state subscriptions when asked.');
+
+  testStage = 'movable caption window and stable rows';
+  const capabilities = await main.webContents.executeJavaScript('window.stageDesktop.getCapabilities()');
+  assert.equal(typeof capabilities.summaryWorker, 'boolean');
+  assert.deepEqual({ ...capabilities, summaryWorker: false },
+    { apiVersion: 2, outputModes: ['overlay', 'window', 'presentation'], stableLines: true, saveMeetingExport: true, summaryWorker: false });
+  await assert.rejects(main.webContents.executeJavaScript(`window.stageDesktop.saveMeetingExport({filename:'../not-allowed',text:'test',format:'md'})`));
+  const windowOptions = { displayId: selected.id, fontSize: 48, position: 'bottom', showEnglish: false,
+    opacity: .88, clickThrough: true, outputMode: 'window' };
+  await main.webContents.executeJavaScript(`window.stageDesktop.openOverlay(${JSON.stringify(windowOptions)})`);
+  const movable = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
+  assert.equal(movable.isResizable(), true);
+  assert.equal(movable.isMovable(), true);
+  assert.equal(movable.isFocusable(), true);
+  assert.equal(movable.isAlwaysOnTop(), false);
+  const manualBounds = { ...movable.getBounds(), x: movable.getBounds().x + 10, width: 800, height: 340 };
+  movable.setBounds(manualBounds);
+  await main.webContents.executeJavaScript(`window.stageDesktop.configureOverlay(${JSON.stringify({ ...windowOptions, fontSize: 52 })})`);
+  assert.deepEqual(movable.getBounds(), manualBounds, 'Font changes must preserve a manually sized caption window.');
+  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify({ english: '', japanese: 'Ignored legacy words',
+    stableLines: ['First anchored line', 'Second anchored line'], translationLanguage: 'en', status: 'live' })})`);
+  await eventually(() => movable.webContents.executeJavaScript(`document.getElementById('partial').textContent === 'Second anchored line'`));
+  assert.deepEqual(await movable.webContents.executeJavaScript(`(() => {
+    const top = document.getElementById('committed').getBoundingClientRect();
+    const bottom = document.getElementById('partial').getBoundingClientRect();
+    return { separateRows: bottom.top >= top.bottom - 1, scrollTop: document.getElementById('japanese').scrollTop,
+      mode: document.body.classList.contains('windowed') };
+  })()`), { separateRows: true, scrollTop: 0, mode: true });
+  movable.setBounds({ ...manualBounds, width: 520 });
+  await main.webContents.executeJavaScript(`window.stageDesktop.configureOverlay(${JSON.stringify({ ...windowOptions, fontSize: 96 })})`);
+  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify({ english: '', japanese: '',
+    stableLines: ['This entire fixed caption line must fit inside a small window.', 'Both lines keep their original breaks.'], status: 'live' })})`);
+  await eventually(() => movable.webContents.executeJavaScript(`(() => {
+    const row = document.getElementById('committed');
+    const range = document.createRange(); range.selectNodeContents(row);
+    const text = range.getBoundingClientRect();
+    const viewport = document.getElementById('japanese').getBoundingClientRect();
+    return parseFloat(getComputedStyle(document.getElementById('japanese')).fontSize) < 96 && text.right <= viewport.right + 1;
+  })()`));
+  await main.webContents.executeJavaScript(`window.stageDesktop.openOverlay(${JSON.stringify({ ...windowOptions, outputMode: 'overlay' })})`);
+  await eventually(() => movable.isDestroyed());
+  const switched = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
+  assert.equal(switched.isMovable(), false, 'Switching modes must replace native window properties.');
+  await main.webContents.executeJavaScript('window.stageDesktop.closeOverlay()');
+  await eventually(() => switched.isDestroyed());
 
   const before = main.webContents.getURL();
   await main.webContents.executeJavaScript('window.location.href = "https://example.invalid"; true');

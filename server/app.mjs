@@ -8,6 +8,7 @@ import { createSonioxProvider, glossaryToContext } from './soniox.mjs';
 import { createCodeVerifier, createRateLimiter, digest, readSessionToken } from './security.mjs';
 import { validateTeamPatch } from './validation.mjs';
 import { HttpError } from './errors.mjs';
+import { registerMeetingRoutes } from './meetings.mjs';
 
 const SESSION_AGE = 7 * 24 * 60 * 60 * 1000;
 
@@ -116,6 +117,7 @@ export function createApp({ config: configOverrides = {}, provider, store } = {}
       context: glossaryToContext(database.getTeam().glossary),
     });
   });
+  registerMeetingRoutes(app, database.meetings, requireSession);
   app.use('/api', (req, res, next) => next(new HttpError(404, 'This API endpoint does not exist.')));
 
   if (existsSync(join(config.distPath, 'index.html'))) {

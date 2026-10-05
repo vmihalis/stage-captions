@@ -35,7 +35,11 @@ function normalizeOverlayOptions(value) {
   if (value.displayId !== undefined && (typeof value.displayId !== 'string' || value.displayId.length > 64)) {
     throw new Error('Invalid screen.');
   }
-  return { displayId: value.displayId, fontSize, opacity, position: value.position,
+  if (value.outputMode !== undefined && !['overlay', 'window', 'presentation'].includes(value.outputMode)) {
+    throw new Error('Invalid caption output mode.');
+  }
+  return { ...(value.outputMode === undefined ? {} : { outputMode: value.outputMode }),
+    displayId: value.displayId, fontSize, opacity, position: value.position,
     showEnglish: value.showEnglish, clickThrough: value.clickThrough };
 }
 
@@ -52,6 +56,13 @@ function normalizeCaptionPayload(value) {
   if (value.translationLanguage !== undefined) {
     if (!['en', 'ja'].includes(value.translationLanguage)) throw new Error('Invalid caption language.');
     strings.translationLanguage = value.translationLanguage;
+  }
+  if (value.stableLines !== undefined) {
+    if (!Array.isArray(value.stableLines) || value.stableLines.length > 2
+      || value.stableLines.some(line => typeof line !== 'string' || line.length > 6000 || /[\r\n]/.test(line))) {
+      throw new Error('Invalid stable caption lines.');
+    }
+    strings.stableLines = [...value.stableLines];
   }
   return { ...strings, status: value.status };
 }
@@ -71,4 +82,20 @@ function overlayBounds(workArea, options) {
     ? workArea.y + margin : workArea.y + workArea.height - height - margin), width, height };
 }
 
-module.exports = { normalizeServerOrigin, matchesOrigin, normalizeOverlayOptions, normalizeCaptionPayload, chooseDisplay, overlayBounds };
+function separateWindowBounds(workArea, options) {
+  const bounds = overlayBounds(workArea, options);
+  return { ...bounds, width: Math.min(bounds.width, 1100) };
+}
+
+function captureSourceAllowed(source, outputDisplay, displays, ownIds) {
+  if (!source || typeof source.id !== 'string' || ownIds.includes(source.id) || /^window:[^:]+:1$/.test(source.id)) return false;
+  if (source.id.startsWith('window:')) return true;
+  if (!source.id.startsWith('screen:') || !source.display_id) return false;
+  const sourceDisplay = displays.find(display => String(display.id) === source.display_id);
+  if (!sourceDisplay || String(outputDisplay.id) === source.display_id) return false;
+  const a = sourceDisplay.bounds, b = outputDisplay.bounds;
+  // Mirrored or overlapping desktop coordinates can feed output back into capture.
+  return a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+}
+
+module.exports = { normalizeServerOrigin, matchesOrigin, normalizeOverlayOptions, normalizeCaptionPayload, chooseDisplay, overlayBounds, separateWindowBounds, captureSourceAllowed };

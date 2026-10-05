@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; media-src blob:; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stage presentation</title>
+  <link rel="stylesheet" href="overlay.css">
+  <link rel="stylesheet" href="presentation.css">
+  <script defer src="overlay.js"></script>
+  <script defer src="presentation.js"></script>
+</head>
+<body class="presentation">
+  <section id="source-picker">
+    <div class="eyebrow">STAGE · PRESENTATION OUTPUT</div>
+    <h1>Choose what the audience sees.</h1>
+    <p>Your selected window or screen fits above or below a reserved caption area on the extended display.</p>
+    <p>Keep your slides or app open on the control screen. Choose a window for slides and demos; choose the control screen to include app switching. Control it in the original app.</p>
+    <p class="privacy">Video stays on this computer. No screen audio is captured. Your system may ask for screen recording permission.</p>
+    <button id="load-sources" type="button">Choose window or screen</button>
+    <div id="source-list" aria-label="Available windows and screens"></div>
+    <p id="capture-error" role="alert" hidden></p>
+    <p class="hint">Stage windows and the output screen are excluded to avoid a repeating image. If your window is missing, keep it visible, check system permissions, then refresh. For mirrored projectors, use a separate caption window beside windowed slides.</p>
+  </section>
+  <main id="presentation-output" hidden>
+    <div id="content-region"><video id="presentation-video" autoplay muted playsinline></video></div>
+    <section id="caption-lane" aria-label="Captions">
+      <section id="caption-card" aria-live="off">
+        <div id="caption-status" hidden></div>
+        <div id="japanese" lang="ja"><span id="committed"></span><span id="partial"></span></div>
+        <div id="english"></div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

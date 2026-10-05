@@ -18,3 +18,8 @@ body.top { align-items: flex-start; }
 #caption-status[data-status="rehearsal"] { color: oklch(90% .10 95); border-color: oklch(58% .10 95); background: oklch(30% .06 95); }
 #caption-status[data-status="error"], #caption-status[data-status="reconnecting"] { color: oklch(88% .08 65); border-color: oklch(59% .10 65); }
 [hidden] { display: none !important; }
+
+body.windowed { background: #151b12; align-items: center; }
+body.windowed #caption-card { border-radius: 0; background: #151b12; }
+body.stable-captions #japanese { height: 2.9em; white-space: nowrap; }
+body.stable-captions #committed, body.stable-captions #partial { display: block; height: 1.45em; overflow: hidden; white-space: nowrap; color: inherit; }

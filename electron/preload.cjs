@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('stageDesktop', Object.freeze({
   isDesktop: true,
+  summarizeMeeting: payload => ipcRenderer.invoke('stage:summarize-meeting', payload),
+  cancelSummary: () => ipcRenderer.invoke('stage:cancel-summary'),
+  saveMeetingExport: payload => ipcRenderer.invoke('stage:save-meeting-export', payload),
+  getCapabilities: () => ipcRenderer.invoke('stage:capabilities'),
   getDisplays: () => ipcRenderer.invoke('stage:displays'),
   openOverlay: options => ipcRenderer.invoke('stage:open-overlay', options),
   configureOverlay: options => ipcRenderer.invoke('stage:configure-overlay', options),

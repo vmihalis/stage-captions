@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeftRight, ArrowRight, AudioLines, BookOpen, Captions as CaptionsIcon, Check, ChevronRight, CircleHelp, CircleStop, ExternalLink, Globe2, KeyRound, LoaderCircle, LogOut, Mic, Monitor, Play, Radio, Settings2, SlidersHorizontal, Volume2, X } from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, Bookmark, FileText, AudioLines, BookOpen, Captions as CaptionsIcon, Check, ChevronRight, CircleHelp, CircleStop, ExternalLink, Globe2, KeyRound, LoaderCircle, LogOut, Mic, Monitor, Play, Radio, Settings2, SlidersHorizontal, Volume2, X } from 'lucide-react';
 import { api } from './lib/api';
 import { captionTail, parseTranslations } from './lib/captions';
 import { toOverlayPayload } from './lib/caption-output';
 import { useCaptions } from './hooks/useCaptions';
+import { useMeeting } from './hooks/useMeeting';
+import MeetingHistory from './MeetingHistory';
 import type { CaptionPace, TranslationMode } from './lib/speech-config';
 import CaptionText from './CaptionText';
 import RehearsalSlide from './RehearsalSlide';
@@ -18,7 +20,7 @@ function formatTime(seconds: number) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<'present' | 'vocabulary' | 'setup'>('present');
+  const [tab, setTab] = useState<'present' | 'vocabulary' | 'setup' | 'meetings'>('present');
   const [session, setSession] = useState<Session | null>(null);
   const [team, setTeam] = useState<Team>(emptyTeam);
   const [serverError, setServerError] = useState('');
@@ -30,7 +32,10 @@ export default function App() {
   const [deviceId, setDeviceId] = useState('default');
   const [pace, setPace] = useState<CaptionPace>('responsive');
   const [mode, setMode] = useState<TranslationMode>('auto');
-  const [previewLayout, setPreviewLayout] = useState<'overlay' | 'reserved'>('reserved');
+  const [displayMode, setDisplayMode] = useState<'readable' | 'drafts'>('readable');
+  const [nativeModes, setNativeModes] = useState<string[]>(['overlay']);
+  const [summaryAvailable, setSummaryAvailable] = useState(false);
+  const [selectedMeeting, setSelectedMeeting] = useState<string | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [micChecking, setMicChecking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -39,7 +44,7 @@ export default function App() {
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [shortcutRegistered, setShortcutRegistered] = useState<boolean | null>(null);
   const [starting, setStarting] = useState(false);
-  const [options, setOptions] = useState<OverlayOptions>({ fontSize: 42, position: 'bottom', showEnglish: false, opacity: 0.9, clickThrough: true });
+  const [options, setOptions] = useState<OverlayOptions>({ outputMode: window.stageDesktop ? 'overlay' : 'window', fontSize: 42, position: 'bottom', showEnglish: false, opacity: 0.9, clickThrough: true });
   const [fontSizeInput, setFontSizeInput] = useState('42');
   const [now, setNow] = useState(Date.now());
   const channelId = useRef(crypto.randomUUID());
@@ -48,9 +53,23 @@ export default function App() {
   const micCleanup = useRef<(() => void) | null>(null);
   const micGeneration = useRef(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const live = useCaptions();
+  const previewSection = useRef<HTMLElement>(null);
+  const [previewWidth, setPreviewWidth] = useState(800);
+  const selectedWidth = displays.find(display => display.id === options.displayId)?.width ?? displays.find(display => display.primary)?.width ?? 1100;
+  const captionWidth = Math.max(300, (options.outputMode === 'window' ? Math.min(selectedWidth, 1100) : selectedWidth) - 140);
+  const lineCapacity = { en: Math.min(60, Math.max(8, Math.floor(captionWidth / (options.fontSize * .65)))), ja: Math.min(30, Math.max(8, Math.floor(captionWidth / options.fontSize))) };
+  const previewFontSize = Math.max(14, options.fontSize * Math.min(1, Math.max(200, previewWidth - 84) / captionWidth));
+  useEffect(() => {
+    const node = previewSection.current;
+    if (!node) return;
+    const observer = new ResizeObserver(() => setPreviewWidth(node.clientWidth));
+    observer.observe(node); return () => observer.disconnect();
+  }, [tab]);
+  const meeting = useMeeting(session?.authenticated ?? false);
+  const live = useCaptions({ maxLineCharacters: lineCapacity, onTokens: meeting.onTokens, onEnded: interrupted => { void meeting.end(interrupted).catch(error => setNotice((error as Error).message)); } });
   const desktop = window.stageDesktop;
-  const localPreview = import.meta.env.VITE_STAGE_PREVIEW === 'true';
+  const localPreview = import.meta.env.VITE_STAGE_PREVIEW === 'true' || (['127.0.0.1', 'localhost'].includes(window.location.hostname) && window.location.port === '4318');
+  useEffect(() => { if (localPreview) document.title = 'Stage Preview · Live captions'; }, [localPreview]);
   const shortcut = /Mac/i.test(navigator.platform) ? '⌘⇧H' : 'Ctrl+Shift+H';
   const isBusy = busyStates.includes(live.status);
   const authorized = session?.authenticated ?? false;
@@ -115,12 +134,14 @@ export default function App() {
   }, [live.audienceCaptions, live.status, options, overlayOpen, desktop]);
   useEffect(() => {
     if (!desktop) return;
+    void desktop.getCapabilities?.().then(capabilities => { setNativeModes(capabilities.outputModes); setSummaryAvailable(!!capabilities.summaryWorker); }).catch(() => {});
     void desktop.getDisplays().then(setDisplays).catch(() => setNotice('Could not read displays. Reconnect your projector and try opening captions again.'));
     let disposed = false;
     const reflectState = (state: OverlayState) => {
       if (disposed) return;
       setOverlayOpen(state.visible);
       setShortcutRegistered(state.shortcutRegistered);
+      if (state.presentationError) setNotice(state.presentationError);
     };
     const stopClosed = desktop.onOverlayClosed(() => setOverlayOpen(false));
     const stopState = desktop.onOverlayStateChanged?.(reflectState);
@@ -207,15 +228,16 @@ export default function App() {
     if (!rehearsal && !ready) { setTab('setup'); return; }
     setStarting(true); setNotice(''); stopMicCheck();
     try {
-      if (desktop) {
+      if (desktop && !overlayOpen) {
         desktop.updateOverlay({ english: '', japanese: '', partialJapanese: '', status: 'idle' });
         await desktop.openOverlay(options);
         setOverlayOpen(true);
       }
-      if (rehearsal) live.rehearse(mode);
-      else live.start(deviceId, pace, mode);
-    } catch {
-      setNotice('Could not show captions on your screen. Try Show captions on screen before starting again.');
+      if (rehearsal) live.rehearse(mode, displayMode);
+      else { await meeting.start(mode); live.start(deviceId, pace, mode, displayMode); }
+    } catch (error) {
+      if (!rehearsal) await meeting.end(true).catch(() => {});
+      setNotice((error as Error).message || 'Could not start captions. Check the selected output and team connection.');
     } finally { setStarting(false); }
   };
 
@@ -229,10 +251,16 @@ export default function App() {
   };
 
   const logout = async () => {
-    await live.stop(); stopMicCheck();
-    try { await api('/api/auth/logout', { method: 'POST' }); setTeam(emptyTeam); await refresh(); }
-    catch (error) { setNotice((error as Error).message); }
+    try {
+      await live.stop(); await meeting.end(); stopMicCheck();
+      const saved = await meeting.retry();
+      if (saved?.pending || saved?.error) { setNotice('Wait for the transcript to finish saving before disconnecting the team.'); return; }
+      await api('/api/auth/logout', { method: 'POST' }); setTeam(emptyTeam); await refresh();
+    } catch (error) { setNotice((error as Error).message); }
   };
+
+  const sessionActions = <div className="session-actions">{isBusy ? <button className="button stop" disabled={live.status === 'stopping'} onClick={() => void live.stop()}><CircleStop size={18} />{live.status === 'stopping' ? 'Stopping…' : live.status === 'rehearsal' ? 'Stop rehearsal' : 'Stop & save meeting'}</button> : <button className="button primary" disabled={starting} onClick={() => void startPresentation()}><Mic size={18} />{starting ? 'Preparing captions…' : !authorized ? 'Connect team to go live' : !ready ? 'Finish live setup' : 'Start captions'}</button>}
+            <button className="button secondary" disabled={isBusy || starting} onClick={() => void startPresentation(true)}><Play size={16} /> Run a rehearsal</button></div>;
 
   return <div className="app-shell">
     <header className="topbar">
@@ -242,26 +270,35 @@ export default function App() {
       </div>
     </header>
     <div className="page-width">
-      <nav className="tabs" aria-label="Workspace"><button className={tab === 'present' ? 'active' : ''} onClick={() => setTab('present')}><Radio size={17} /> Present</button><button className={tab === 'vocabulary' ? 'active' : ''} onClick={() => setTab('vocabulary')}><BookOpen size={17} /> Team vocabulary</button><button className={tab === 'setup' ? 'active' : ''} onClick={() => setTab('setup')}><CircleHelp size={17} /> Setup guide</button><span className="platform-label">{desktop ? 'Desktop app' : 'Browser preview'}</span></nav>
-      {localPreview && <div className="notice" role="status">Local preview · Run a rehearsal with sample captions and presentation layouts. Live translation and app capture are not configured here.</div>}
+      <nav className="tabs" aria-label="Workspace"><button className={tab === 'present' ? 'active' : ''} onClick={() => setTab('present')}><Radio size={17} /> Present</button><button className={tab === 'vocabulary' ? 'active' : ''} onClick={() => setTab('vocabulary')}><BookOpen size={17} /> Team vocabulary</button><button className={tab === 'meetings' ? 'active' : ''} onClick={() => setTab('meetings')}><FileText size={17} /> Meetings</button><button className={tab === 'setup' ? 'active' : ''} onClick={() => setTab('setup')}><CircleHelp size={17} /> Setup guide</button><span className="platform-label">{desktop ? 'Desktop app' : 'Browser preview'}</span></nav>
+      {localPreview && <div className="notice" role="status">Local preview · Production is unchanged. Rehearsal uses sample captions; live translation requires a configured team account.</div>}
       {notice && <div className="notice" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={16} /></button></div>}
       {serverError && <div className="notice error" role="alert"><span>{serverError} Rehearsal remains available.</span><button className="text-button" onClick={refresh}>Retry connection</button></div>}
       {tab === 'present' && <>
-        <div className="page-heading"><div><h1>Live captions</h1><p>{mode === 'auto' ? 'Speak English or Japanese. Captions translate into the other language.' : mode === 'ja_to_en' ? 'Your voice in Japanese. Your audience follows in English.' : 'Your voice in English. Your audience follows in Japanese.'}</p></div><div className={`session-status ${live.status}`}><span className="status-dot" />{statusNames[live.status]}{isBusy && <span className="timer">{formatTime(elapsed)}</span>}</div></div>
+        <div className="page-heading"><div><h1>Live captions</h1><p>{mode === 'auto' ? 'Speak English or Japanese. Captions translate into the other language.' : mode === 'ja_to_en' ? 'Your voice in Japanese. Your audience follows in English.' : 'Your voice in English. Your audience follows in Japanese.'}</p></div><div className="present-heading-actions">{sessionActions}<div className={`session-status ${live.status}`}><span className="status-dot" />{statusNames[live.status]}{isBusy && <span className="timer">{formatTime(elapsed)}</span>}</div></div></div>
+        <div className="output-layout-toolbar" aria-label="Caption layout">
+          <div><strong>Where should captions go?</strong><span>Choose how the audience sees your content.</span></div>
+          <div className="output-mode-buttons">{([{ id: 'overlay', label: 'Over your apps' }, { id: 'window', label: 'Separate caption window' }, { id: 'presentation', label: 'Slides + caption strip' }] as const).map(choice => <button key={choice.id} className={`button secondary small ${options.outputMode === choice.id ? 'selected' : ''}`} aria-pressed={options.outputMode === choice.id} disabled={choice.id === 'overlay' ? !desktop : choice.id === 'presentation' ? !nativeModes.includes('presentation') : !!desktop && !nativeModes.includes('window')} onClick={() => setOptions(previous => ({ ...previous, outputMode: choice.id, ...(choice.id === 'presentation' ? { displayId: displays.find(display => !display.primary)?.id } : {}) }))}>{choice.label}</button>)}</div>
+          <p className="field-hint">{options.outputMode === 'presentation' ? 'Choose an app or screen to share. Stage fits the whole image beside a reserved caption strip on a separate, extended projector. Your shared app remains controlled on this computer.' : options.outputMode === 'window' ? 'Move and resize the caption window beside a windowed presentation. Works with a mirrored screen. Fullscreen apps use the whole screen, so switch them to windowed mode for this layout.' : 'Floating captions stay above your slides and apps. For space that never covers content, choose Separate caption window or Slides + caption strip.'} {!!desktop && !nativeModes.includes('window') && ' New layout modes need the updated desktop app; this installed version only supports the overlay.'} {!desktop && ' The desktop app adds floating overlays and the extended-projector layout.'}</p>
+          <button className="button primary small" onClick={() => void openOutput()}><ExternalLink size={16} />{overlayOpen ? 'Close caption output' : options.outputMode === 'presentation' ? 'Choose content to share' : options.outputMode === 'window' ? 'Open separate caption window' : 'Show overlay'}</button>
+        </div>
         <div className="present-layout">
-          <section className="preview-section" aria-label="Audience caption preview">
+          <section ref={previewSection} className="preview-section" aria-label="Audience caption preview">
             <div className="section-toolbar"><div><Monitor size={17} /><strong>Audience preview</strong></div><span className="field-hint">{desktop ? overlayOpen ? 'On-screen captions shown' : 'On-screen captions hidden' : 'Presenter preview'}</span></div>
-            <div className={`stage-preview ${options.position} ${localPreview && previewLayout === 'reserved' ? 'reserved' : ''}`}>
-              {localPreview && previewLayout === 'reserved' ? <RehearsalSlide /> : <div className="slide-placeholder" aria-hidden="true"><span className="slide-small-line" /><span className="slide-large-line" /><span className="slide-medium-line" /><div className="slide-chart"><span /><span /><span /><span /><span /></div><p>Your slides or live demo</p></div>}
-              <div className="preview-captions" style={{ backgroundColor: `oklch(0.12 0 0 / ${options.opacity})`, '--caption-size': `${options.fontSize}px` } as React.CSSProperties}>
+            <div className={`stage-preview ${options.position} ${options.outputMode === 'presentation' ? 'reserved' : ''}`}>
+              {options.outputMode === 'presentation' ? <RehearsalSlide /> : <div className="slide-placeholder" aria-hidden="true"><span className="slide-small-line" /><span className="slide-large-line" /><span className="slide-medium-line" /><div className="slide-chart"><span /><span /><span /><span /><span /></div><p>Your slides or live demo</p></div>}
+              <div className="preview-captions" style={{ backgroundColor: `oklch(0.12 0 0 / ${options.opacity})`, '--caption-size': `${previewFontSize}px` } as React.CSSProperties}>
                 {live.status === 'rehearsal' && <span className="rehearsal-label">Rehearsal · Sample text · Microphone off</span>}
                 {interrupted ? <p className="caption-placeholder">{statusNames[live.status]}</p> : (outputPayload.japanese || outputPayload.partialJapanese) ? <>
                   {options.showEnglish && <p className="caption-source">{outputPayload.english}</p>}
-                  <CaptionText final={outputPayload.japanese} partial={outputPayload.partialJapanese} language={outputPayload.translationLanguage} />
+                  <CaptionText final={outputPayload.japanese} partial={outputPayload.partialJapanese} language={outputPayload.translationLanguage} stableLines={outputPayload.stableLines} />
                 </> : <div className="empty-caption"><CaptionsIcon size={26} /><p>Translated captions will appear here</p><span>{live.status === 'live' ? 'Listening for your voice…' : 'Run a rehearsal to check the layout.'}</span></div>}
               </div>
             </div>
             <div className="preview-footnote"><span><span className={`status-dot ${isBusy ? 'on' : ''}`} /> {live.status === 'rehearsal' ? 'Sample captions. No audio is recorded or sent.' : live.status === 'live' ? 'Microphone audio is being sent to Soniox.' : ['connecting', 'reconnecting'].includes(live.status) ? 'Microphone active. Connecting to the translation service…' : live.status === 'stopping' ? 'Ending the session and releasing the microphone…' : 'Your microphone is off unless you run a check.'}</span><button className="text-button" disabled={!outputPayload.english && !outputPayload.japanese && !outputPayload.partialJapanese} onClick={live.clear}>Clear captions</button></div>
+            {displayMode === 'readable' && <p className="readability-note">Easy to read · Finalized phrases in fixed lines. A short display buffer reduces jumping text.{(live.audienceCaptions.displayLagMs ?? 0) > 3000 && ' Caption delivery is arriving in bursts; the display is catching up.'}</p>}
+            {meeting.meeting && <div className="meeting-save-bar"><div><FileText size={18} /><span><strong>{meeting.meeting.status === 'recording' ? 'Saving this meeting' : meeting.pending ? 'Finishing meeting upload' : 'Meeting saved'}</strong><small>{meeting.pending ? `${meeting.pending} pending upload${meeting.pending === 1 ? '' : 's'}` : `${meeting.meeting.entryCount} finalized entries`} · Shared with your team</small></span></div><div>{meeting.meeting.status === 'recording' && <button className="button secondary small" onClick={() => void meeting.bookmark().then(() => setNotice('Moment marked. Find it in this meeting’s transcript.')).catch(error => setNotice((error as Error).message))}><Bookmark size={15} /> Mark moment</button>}<button className="text-button" onClick={() => { setSelectedMeeting(meeting.meeting!.id); setTab('meetings'); }}>{meeting.meeting.status === 'recording' ? 'View transcript' : 'Review & summarize'}</button></div></div>}
+            {meeting.error && <div className="notice error" role="alert"><span>{meeting.error}</span><button className="text-button" onClick={() => void meeting.retry()}>Retry saving</button></div>}
             <div className="transcript-section"><div className="transcript-label"><AudioLines size={17} /> Spoken text <span>Presenter view only</span></div><p className={presenterSpeech ? '' : 'muted'}>{presenterSpeech || 'Recognized speech will appear here once the session starts.'}</p></div>
             {(live.error || micError) && <div className="notice error" role="alert">{live.error || micError}</div>}
             {live.muted && <div className="notice" role="alert">Your microphone is muted by the system or device.</div>}
@@ -276,30 +313,31 @@ export default function App() {
             <div className="select-with-icon"><Mic size={17} /><select id="microphone" value={deviceId} disabled={isBusy || micChecking} onChange={event => setDeviceId(event.target.value)}><option value="default">System default microphone</option>{devices.filter(device => device.deviceId && device.deviceId !== 'default').map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></div>
             <div className="mic-check-row"><div className="level-meter" aria-label={micChecking ? 'Microphone input level' : 'Microphone check inactive'}>{Array.from({ length: 16 }, (_, index) => <i key={index} className={micChecking && index / 16 < micLevel ? 'lit' : ''} />)}</div><button className="text-button" disabled={isBusy} onClick={checkMic}>{micChecking ? 'Stop check' : 'Check mic'}</button></div>
             {micChecking && <p className="field-hint">Local check only. Stops after 10 seconds.</p>}
-            <label className="field-label" htmlFor="caption-pace">Caption pace</label>
+            <label className="field-label" htmlFor="caption-display-mode">Audience reading</label>
+            <select id="caption-display-mode" value={displayMode} disabled={isBusy || starting} onChange={event => setDisplayMode(event.target.value as 'readable' | 'drafts')}><option value="readable">Easy to read</option><option value="drafts">Live drafts · quickest updates</option></select>
+            <p className="field-hint">{displayMode === 'readable' ? 'Keeps finalized phrases still for reading, with a short display buffer. Recognition continues at full speed.' : 'Shows provisional words immediately. Wording and line breaks can change as the translation develops.'}</p>
+            <label className="field-label" htmlFor="caption-pace">Speech processing</label>
             <select id="caption-pace" value={pace} disabled={isBusy || starting} aria-describedby="caption-pace-hint" onChange={event => setPace(event.target.value as CaptionPace)}><option value="responsive">Responsive</option><option value="context">More context</option></select>
             <p className="field-hint" id="caption-pace-hint">{pace === 'responsive' ? 'Earlier phrase boundaries. Draft words may change as you speak.' : 'Waits longer for complete phrases. Useful if you pause mid-sentence.'} Choose before starting captions.</p>
             <div className="control-separator" />
-            {localPreview && <><label className="field-label" htmlFor="preview-layout">Layout preview</label><select id="preview-layout" value={previewLayout} onChange={event => setPreviewLayout(event.target.value as 'overlay' | 'reserved')}><option value="reserved">Reserved caption strip</option><option value="overlay">Floating overlay</option></select><p className="field-hint">Sample layout only. Reserved space fits the whole slide above or below captions. Live app capture has not been added.</p></>}
             <label className="field-label" htmlFor="display">Caption output</label>
             {desktop ? <select id="display" value={options.displayId ?? ''} onFocus={() => void desktop.getDisplays().then(setDisplays)} onChange={event => setOptions({ ...options, displayId: event.target.value || undefined })}><option value="">Primary display</option>{displays.map(display => <option key={display.id} value={display.id}>{display.label} · {display.width} × {display.height}</option>)}</select> : <div className="browser-output"><Monitor size={18} /><div><strong>Separate browser window</strong><span>Use the desktop app to float captions over slides.</span></div></div>}
             <button className="button secondary full" onClick={() => void openOutput()} aria-pressed={overlayOpen}><ExternalLink size={17} />{overlayOpen ? 'Hide captions' : desktop ? 'Show captions on screen' : 'Open caption window'}</button>
             {desktop && <p className="field-hint">{shortcutRegistered === false ? 'Shortcut unavailable: another app may be using it. Use this button' : `${shortcut} · ${shortcutRegistered === null ? 'hide/show an open caption window' : 'show/hide captions'}`}. Hiding keeps the microphone on.</p>}
-            <p className="field-hint">Old captions clear after 6 seconds without new words. Listening continues.</p>
+            <p className="field-hint">Captions clear after the last phrase has had time to be read. Listening continues; meeting history stays saved.</p>
             <div className="field-pair"><div><label className="field-label" htmlFor="position">Position</label><select id="position" value={options.position} onChange={event => setOptions({ ...options, position: event.target.value as 'top' | 'bottom' })}><option value="bottom">Bottom</option><option value="top">Top</option></select></div><div><label className="field-label" htmlFor="font-size">Text size (px)</label><input id="font-size" type="number" min="24" max="96" step="1" inputMode="numeric" value={fontSizeInput} aria-describedby="font-size-hint" onChange={event => changeFontSize(event.target.value)} onBlur={finishFontSize} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><p className="field-hint" id="font-size-hint">24–96 px</p></div></div>
             <label className="check-label"><input type="checkbox" checked={options.showEnglish} onChange={event => setOptions({ ...options, showEnglish: event.target.checked })} /><span>Also show spoken text</span></label>
             <label className="range-label" htmlFor="opacity"><span>Background opacity</span><output>{Math.round(options.opacity * 100)}%</output></label><input id="opacity" type="range" min="0.4" max="1" step="0.05" value={options.opacity} onChange={event => setOptions({ ...options, opacity: Number(event.target.value) })} />
             <div className="control-separator" />
-            {isBusy ? <button className="button stop full" disabled={live.status === 'stopping'} onClick={() => void live.stop()}><CircleStop size={18} />{live.status === 'stopping' ? 'Stopping…' : live.status === 'rehearsal' ? 'Stop rehearsal' : 'Stop captions'}</button> : <button className="button primary full" disabled={starting} onClick={() => void startPresentation()}><Mic size={18} />{starting ? 'Preparing captions…' : !authorized ? 'Connect team to go live' : !ready ? 'Finish live setup' : 'Start captions'}</button>}
-            <button className="button secondary full" disabled={isBusy || starting} onClick={() => void startPresentation(true)}><Play size={16} /> Run a rehearsal</button>
-            <p className="control-note">{ready ? 'Live translation uses your team’s Soniox account.' : 'Rehearsal works without an account or microphone.'}</p>
+            <p className="control-note">{ready ? 'Live audio goes to Soniox. Finalized speech and translations are saved on your team server; audio is not stored by Stage.' : 'Rehearsal works without an account or microphone.'}</p>
           </aside>
         </div>
         <div className="presentation-tip"><Volume2 size={18} /><p>A headset or presenter microphone gives the clearest captions. Do a short rehearsal on the actual projected screen.</p><button className="text-button" onClick={() => setTab('setup')}>Setup guide <ChevronRight size={16} /></button></div>
       </>}
+      {tab === 'meetings' && <MeetingHistory authenticated={authorized} onConnect={() => setConnectOpen(true)} selectedId={selectedMeeting} onSelect={setSelectedMeeting} summaryAvailable={summaryAvailable} />}
       {tab === 'vocabulary' && <Vocabulary team={team} authenticated={authorized} onConnect={() => setConnectOpen(true)} onSaved={setTeam} />}
       {tab === 'setup' && <SetupGuide session={session} desktop={!!desktop} onConnect={() => setConnectOpen(true)} onRehearse={() => { setTab('present'); void startPresentation(true); }} />}
-      <footer><span>Stage <span className="footer-dot">·</span> {modeLabel}</span><span>{session?.provider.configured ? `Soniox · ${session.provider.region === 'jp' ? 'Japan' : session.provider.region === 'eu' ? 'Europe' : 'Global'} region` : 'Live translation not connected'} <span className="footer-dot">·</span> Captions stay in this session</span></footer>
+      <footer><span>Stage <span className="footer-dot">·</span> {modeLabel}</span><span>{session?.provider.configured ? `Soniox · ${session.provider.region === 'jp' ? 'Japan' : session.provider.region === 'eu' ? 'Europe' : 'Global'} region` : 'Live translation not connected'} <span className="footer-dot">·</span> Meeting transcripts shared with your team</span></footer>
     </div>
     <dialog ref={dialogRef} className="connect-dialog" onCancel={() => { setConnectOpen(false); setAccessCode(''); }} onClose={() => setConnectOpen(false)}><form onSubmit={unlock}><div className="dialog-heading"><span className="brand-mark"><KeyRound size={22} /></span><button type="button" className="icon-button" onClick={() => { setConnectOpen(false); setAccessCode(''); }} aria-label="Close team connection"><X size={20} /></button></div><h2>Connect your team</h2><p>Enter the shared access code from your organizer. This laptop will stay connected for seven days.</p><label className="field-label" htmlFor="team-code">Team access code</label><input autoFocus id="team-code" type="password" autoComplete="off" required maxLength={256} value={accessCode} onChange={event => setAccessCode(event.target.value)} placeholder="Enter your team code" />{connectError && <p className="form-error" role="alert">{connectError}</p>}<button className="button primary full" disabled={connecting}>{connecting ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{connecting ? 'Connecting…' : 'Connect team'}</button><p className="dialog-footnote">No individual account needed. Your organizer manages the translation account.</p></form></dialog>
   </div>;
@@ -336,9 +374,9 @@ function Vocabulary({ team, authenticated, onConnect, onSaved }: { team: Team; a
 function SetupGuide({ session, desktop, onConnect, onRehearse }: { session: Session | null; desktop: boolean; onConnect: () => void; onRehearse: () => void }) {
   return <section className="settings-page"><div className="page-heading"><div><h1>Ready for the room</h1><p>A short check before your first presentation.</p></div><Settings2 className="heading-icon" size={28} /></div>
     <ol className="setup-steps"><li><span className="step-number">1</span><div><h2>Connect this laptop</h2><p>Your organizer shares the app, a team server address, and one access code. Enter the code once. It is remembered on this laptop for seven days.</p>{session?.authenticated ? <span className="inline-success"><Check size={16} /> Team connected</span> : <button className="button secondary small" onClick={onConnect}><KeyRound size={15} /> Enter team code</button>}</div></li>
-      <li><span className="step-number">2</span><div><h2>Choose your microphone and screen</h2><p>Select your headset or presenter microphone. In the desktop app, choose the projected display under Caption output. The caption window floats above your slides and live demos.</p><p className="setup-detail">{desktop ? 'Use Cmd/Ctrl + Shift + H to hide or show the native caption window.' : 'You are in the browser preview. It can open a separate caption page; floating over other applications requires the desktop app.'}</p></div></li>
+      <li><span className="step-number">2</span><div><h2>Choose your microphone and screen</h2><p>Select your headset or presenter microphone. In the desktop app, choose the projected display under Caption output. Choose Over your apps for a floating overlay, Separate caption window for a movable window beside your content, or Slides + caption strip to fit captured content on an extended projector.</p><p className="setup-detail">{desktop ? 'Use Cmd/Ctrl + Shift + H to hide or show the native caption window.' : 'You are in the browser preview. It can open a separate caption page; floating over other applications requires the desktop app.'}</p></div></li>
       <li><span className="step-number">3</span><div><h2>Rehearse on the projector</h2><p>Run a rehearsal to open captions automatically in the desktop app. Check that the back row can read them, then switch between your slides, browser, and demo. Rehearsal uses sample text and keeps your microphone off.</p><button className="button secondary small" onClick={onRehearse}><Play size={15} /> Run a rehearsal</button></div></li>
       <li><span className="step-number">4</span><div><h2>Start captions when you are ready</h2><p>Choose automatic English ↔ Japanese translation, or a fixed audience language. Live mode sends microphone audio to Soniox over the internet. Early wording and detected language may change as more context arrives. Stop captions when you finish.</p></div></li></ol>
-    <div className="organizer-note"><Globe2 size={22} /><div><h2>For the organizer</h2><p>{session?.provider.configured ? 'The translation service is configured. Use a real speaker rehearsal to check accent accuracy and delay before the event.' : 'The server needs a Soniox API key before live translation can start. Set SONIOX_API_KEY and SONIOX_REGION on the server, then restart it. Presenters never enter this key.'}</p><p>Publish the team server over HTTPS, and distribute an installer for each operating system. Japan-region processing requires an enabled Soniox regional project. Audio and transcripts are not saved by this app.</p></div></div>
+    <div className="organizer-note"><Globe2 size={22} /><div><h2>For the organizer</h2><p>{session?.provider.configured ? 'The translation service is configured. Use a real speaker rehearsal to check accent accuracy and delay before the event.' : 'The server needs a Soniox API key before live translation can start. Set SONIOX_API_KEY and SONIOX_REGION on the server, then restart it. Presenters never enter this key.'}</p><p>Publish the team server over HTTPS, and distribute an installer for each operating system. Japan-region processing requires an enabled Soniox regional project. Stage saves finalized speech, translations, and marked moments on the team server. Everyone with the team code can read and export them. Stage does not store microphone audio. Let participants know before starting a meeting.</p></div></div>
   </section>;
 }

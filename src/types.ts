@@ -6,6 +6,8 @@ export interface Captions {
   partialSource: string;
   partialTranslation: string;
   translationLanguage: CaptionLanguage;
+  stableLines?: string[];
+  displayLagMs?: number;
 }
 export interface Glossary {
   terms: string[];
@@ -21,6 +23,7 @@ export interface Session {
 export interface Display { id: string; label: string; width: number; height: number; primary: boolean }
 export interface OverlayOptions {
   displayId?: string;
+  outputMode?: 'overlay' | 'window' | 'presentation';
   fontSize: number;
   position: 'bottom' | 'top';
   showEnglish: boolean;
@@ -33,14 +36,31 @@ export interface OverlayPayload {
   english: string;
   japanese: string;
   partialJapanese?: string;
+  stableLines?: string[];
   translationLanguage?: CaptionLanguage;
   status: 'idle' | 'live' | 'rehearsal' | 'reconnecting' | 'error' | 'stopped';
 }
-export interface OverlayState { open: boolean; visible: boolean; shortcutRegistered: boolean }
+export interface OverlayState {
+  open: boolean; visible: boolean; shortcutRegistered: boolean;
+  outputMode?: 'overlay' | 'window' | 'presentation';
+  presentationStatus?: 'choosing' | 'sharing' | 'error' | null;
+  presentationError?: string;
+}
+export interface MeetingSummary {
+  overview: { text: string; evidenceEntryIds: string[] }[];
+  decisions: { text: string; evidenceEntryIds: string[] }[];
+  actions: { text: string; assignee: string | null; dueDate: string | null; evidenceEntryIds: string[] }[];
+  openQuestions: { text: string; evidenceEntryIds: string[] }[];
+}
+export type SummaryResult = { ok: true; summary: MeetingSummary } | { ok: false; error: { code: string; message: string; recoverable: true } };
 declare global {
   interface Window {
     stageDesktop?: {
       isDesktop: true;
+      getCapabilities?(): Promise<{ apiVersion: number; outputModes: string[]; stableLines: boolean; saveMeetingExport?: boolean; summaryWorker?: boolean }>;
+      saveMeetingExport?(data: { filename: string; text: string; format: 'json' | 'md' }): Promise<{ saved: boolean }>;
+      cancelSummary?(): Promise<void>;
+      summarizeMeeting?(data: import('./lib/meetings').MeetingExport): Promise<SummaryResult>;
       getDisplays(): Promise<Display[]>;
       openOverlay(options: OverlayOptions): Promise<void>;
       updateOverlay(payload: OverlayPayload): void;

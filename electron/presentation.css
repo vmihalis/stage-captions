@@ -1,0 +1,20 @@
+html, body.presentation { background: #10170f; color: #f3f6ed; }
+body.presentation { display: block; font: 16px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; user-select: text; }
+#source-picker { height: 100%; overflow: auto; max-width: 900px; margin: 0 auto; padding: 34px 42px; }
+.eyebrow { color: #b5c6ac; font-size: 12px; letter-spacing: .14em; }
+h1 { font-size: 32px; line-height: 1.2; margin: 12px 0 20px; }
+p { color: #d0dacc; }
+.privacy, .hint { font-size: 14px; color: #a9b6a4; }
+button { border: 1px solid #819674; background: #d8f394; color: #182411; padding: 11px 16px; border-radius: 7px; font: inherit; cursor: pointer; }
+button:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+button:disabled { opacity: .6; cursor: wait; }
+#source-list { display: grid; gap: 8px; margin-top: 18px; }
+#source-list button { background: #23311e; color: #edf2e9; text-align: left; overflow-wrap: anywhere; }
+#capture-error { border-left: 3px solid #e9b779; padding-left: 12px; color: #f4cc96; }
+#presentation-output { height: 100%; width: 100%; display: flex; flex-direction: column; }
+#content-region { flex: 1 1 0; min-height: 0; min-width: 0; background: black; }
+#presentation-video { width: 100%; height: 100%; display: block; object-fit: contain; }
+#caption-lane { flex: 0 0 auto; height: min(52vh, calc(var(--caption-size) * 2.9 + 70px)); overflow: hidden; background: #151b12; }
+body.show-source #caption-lane { height: min(60vh, calc(var(--caption-size) * 3.7 + 80px)); }
+body.top #caption-lane { order: -1; }
+#caption-card { height: 100%; border-radius: 0; background: #151b12; display: flex; flex-direction: column; justify-content: center; }

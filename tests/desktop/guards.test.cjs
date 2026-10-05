@@ -82,3 +82,30 @@ test('caption metadata supports both target languages while preserving legacy pa
     assert.throws(() => normalizeCaptionPayload({ ...caption, translationLanguage: language }));
   }
 });
+
+test('output modes and anchored lines validate the optional extension without changing old payloads', () => {
+  for (const outputMode of ['overlay', 'window', 'presentation']) {
+    assert.equal(normalizeOverlayOptions({ ...options, outputMode }).outputMode, outputMode);
+  }
+  assert.throws(() => normalizeOverlayOptions({ ...options, outputMode: 'capture-anything' }));
+  const caption = { english: '', japanese: '', status: 'live', stableLines: ['Completed words.', 'Next line.'] };
+  assert.deepEqual(normalizeCaptionPayload(caption).stableLines, caption.stableLines);
+  for (const stableLines of [null, ['one', 'two', 'three'], ['new\nline'], [3]]) {
+    assert.throws(() => normalizeCaptionPayload({ ...caption, stableLines }));
+  }
+});
+
+test('capture sources exclude Stage, the output screen, missing display IDs, and mirrored screens', () => {
+  const { captureSourceAllowed } = require('../../electron/guards.cjs');
+  const control = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 } };
+  const output = { id: 2, bounds: { x: 1920, y: 0, width: 1920, height: 1080 } };
+  const check = source => captureSourceAllowed(source, output, [control, output], ['window:4:0']);
+  assert.equal(check({ id: 'window:3:0' }), true);
+  assert.equal(check({ id: 'window:4:0' }), false);
+  assert.equal(check({ id: 'window:5:1' }), false);
+  assert.equal(check({ id: 'screen:0:0', display_id: '1' }), true);
+  assert.equal(check({ id: 'screen:1:0', display_id: '2' }), false);
+  assert.equal(check({ id: 'screen:0:0', display_id: '' }), false);
+  assert.equal(captureSourceAllowed({ id: 'screen:0:0', display_id: '1' }, output,
+    [{ ...control, bounds: output.bounds }, output], []), false);
+});

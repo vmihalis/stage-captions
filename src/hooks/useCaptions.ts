@@ -1,40 +1,56 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MicrophoneSource, SonioxClient } from '@soniox/client';
 import type { Recording, TranscriptionContext } from '@soniox/client';
+import { stopRecording } from '../lib/stop-recording';
 import { api } from '../lib/api';
 import { fallbackTranslationLanguage, speechConfig } from '../lib/speech-config';
 import type { CaptionPace, TranslationMode } from '../lib/speech-config';
 import { accumulate, emptyCaptions, rehearsalLines } from '../lib/captions';
-import { advanceAudienceCaptions, clearAudienceCaptions, emptyAudienceCaptions, expireAudienceCaptions } from '../lib/audience-captions';
+import { createCaptionDisplay, configureCaptionDisplay, receiveCaptionDisplay, tickCaptionDisplay, clearCaptionDisplay, captionDisplayOutput } from '../lib/caption-display';
+import type { Token } from '../lib/captions';
 import type { Captions, CaptionStatus } from '../types';
 
 interface TokenResponse { apiKey: string; websocketUrl: string; model: string; context: TranscriptionContext }
 
-export function useCaptions() {
+export function useCaptions(callbacks: { onTokens?: (tokens: Token[], segment: number) => void; onEnded?: (interrupted: boolean) => void; maxLineCharacters?: { en: number; ja: number } } = {}) {
+  const handlers = useRef(callbacks);
+  handlers.current = callbacks;
+  const segment = useRef(0);
+  const recentSource = useRef('');
+  const displayConfig = useRef({ mode: 'readable' as 'readable' | 'drafts', fallbackLanguage: 'ja' as 'en' | 'ja' | null, maxLineCharacters: callbacks.maxLineCharacters });
   const [captions, setCaptions] = useState<Captions>(emptyCaptions);
   const [audienceCaptions, setAudienceCaptions] = useState<Captions>(emptyCaptions);
-  const audience = useRef(emptyAudienceCaptions());
+  const audience = useRef(createCaptionDisplay());
   const [status, setStatus] = useState<CaptionStatus>('idle');
   const [error, setError] = useState('');
   const [muted, setMuted] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
+  const stopping = useRef(false);
   const recording = useRef<Recording | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const generation = useRef(0);
 
+  useEffect(() => {
+    const capacity = handlers.current.maxLineCharacters;
+    if (!capacity) return;
+    displayConfig.current.maxLineCharacters = capacity;
+    audience.current = configureCaptionDisplay(audience.current, { maxLineCharacters: capacity });
+    setAudienceCaptions(captionDisplayOutput(audience.current));
+  }, [callbacks.maxLineCharacters?.en, callbacks.maxLineCharacters?.ja]);
+
   const resetAudience = useCallback(() => {
-    audience.current = emptyAudienceCaptions();
-    setAudienceCaptions(audience.current.captions);
+    audience.current = createCaptionDisplay(displayConfig.current);
+    setAudienceCaptions(captionDisplayOutput(audience.current));
   }, []);
 
   useEffect(() => {
-    if (status !== 'live') return;
+    if (status !== 'live' && status !== 'rehearsal') return;
     const expiryTimer = setInterval(() => {
-      const next = expireAudienceCaptions(audience.current, Date.now());
+      const next = tickCaptionDisplay(audience.current, Date.now());
       if (next === audience.current) return;
       audience.current = next;
-      setAudienceCaptions(next.captions);
+      setAudienceCaptions(captionDisplayOutput(next));
     }, 250);
     return () => clearInterval(expiryTimer);
   }, [status]);
@@ -61,21 +77,22 @@ export function useCaptions() {
     }
     const active = recording.current;
     if (!active) { cancel(); setStatus('stopped'); return; }
-    setStatus('stopping');
-    // Bound finalization waiting; cancel always releases microphone and connection.
-    const timeout = setTimeout(() => active.cancel(), 3500);
-    try { await active.stop(); } catch { /* Cancellation is expected on timeout. */ }
-    finally { clearTimeout(timeout); cancel(); setStatus('stopped'); setMuted(false); }
+    stopping.current = true; setStatus('stopping');
+    const result = await stopRecording(active);
+    cancel(); stopping.current = false; setStatus('stopped'); setMuted(false);
+    handlers.current.onEnded?.(result.interrupted);
   }, [cancel]);
 
-  const start = useCallback((deviceId: string, pace: CaptionPace = 'responsive', mode: TranslationMode = 'en_to_ja') => {
+  const start = useCallback((deviceId: string, pace: CaptionPace = 'responsive', mode: TranslationMode = 'en_to_ja', displayMode: 'readable' | 'drafts' = 'readable') => {
     cancel();
     const current = generation.current;
     const fallbackLanguage = fallbackTranslationLanguage(mode);
     const initialLanguage = fallbackLanguage ?? 'ja';
     setCaptions(emptyCaptions(initialLanguage));
-    audience.current = emptyAudienceCaptions(initialLanguage);
-    setAudienceCaptions(audience.current.captions);
+    displayConfig.current = { mode: displayMode, fallbackLanguage, maxLineCharacters: handlers.current.maxLineCharacters };
+    audience.current = createCaptionDisplay(displayConfig.current);
+    setAudienceCaptions(captionDisplayOutput(audience.current));
+    segment.current = 0; recentSource.current = '';
     setError(''); setStatus('connecting');
     setStartedAt(null); setLastUpdate(null); setMuted(false);
     const client = new SonioxClient({
@@ -85,7 +102,12 @@ export function useCaptions() {
         return {
           api_key: config.apiKey,
           stt_ws_url: config.websocketUrl,
-          stt_defaults: { model: config.model, context: config.context },
+          stt_defaults: { model: config.model, context: {
+            ...config.context,
+            // Bounded recent finalized speech helps reconnects; full meeting
+            // history is stored separately rather than sent as endless context.
+            text: [config.context?.text, recentSource.current && JSON.stringify(config.context).length < 4200 && `Recent speech from this meeting:\n${recentSource.current}`].filter(Boolean).join('\n\n'),
+          } },
         };
       },
     });
@@ -112,20 +134,23 @@ export function useCaptions() {
     active.on('result', result => {
       if (!valid()) return;
       setCaptions(previous => accumulate(previous, result.tokens, fallbackLanguage));
-      const next = advanceAudienceCaptions(audience.current, result.tokens, Date.now(), fallbackLanguage);
-      if (next.lastActivityAt !== null && next.lastActivityAt !== audience.current.lastActivityAt) setLastUpdate(next.lastActivityAt);
+      handlers.current.onTokens?.(result.tokens, segment.current);
+      const source = result.tokens.filter(token => token.is_final && token.translation_status !== 'translation' && !/^<(end|fin)>$/.test(token.text)).map(token => token.text).join('');
+      recentSource.current = (recentSource.current + source).slice(-1800);
+      const next = receiveCaptionDisplay(audience.current, result.tokens, Date.now());
+      if (result.tokens.some(token => token.text && !/^<(end|fin)>$/.test(token.text))) setLastUpdate(Date.now());
       audience.current = next;
-      setAudienceCaptions(next.captions);
+      setAudienceCaptions(captionDisplayOutput(next));
     });
     active.on('connected', () => { if (valid()) { setStatus('live'); setStartedAt(value => value ?? Date.now()); } });
-    active.on('reconnecting', () => { if (valid()) { setStatus('reconnecting'); setCaptions(emptyCaptions()); resetAudience(); } });
+    active.on('reconnecting', () => { if (valid()) { segment.current++; setStatus('reconnecting'); setCaptions(emptyCaptions()); resetAudience(); } });
     active.on('reconnected', () => { if (valid()) setStatus('live'); });
     active.on('session_restart', () => { if (valid()) { setCaptions(emptyCaptions()); resetAudience(); } });
     active.on('source_muted', () => { if (valid()) setMuted(true); });
     active.on('source_unmuted', () => { if (valid()) setMuted(false); });
     active.on('state_change', ({ new_state }) => {
       if (!valid()) return;
-      if (new_state === 'stopped' || new_state === 'canceled') setStatus('stopped');
+      if (new_state === 'stopped' || new_state === 'canceled') { setStatus('stopped'); if (!stopping.current) handlers.current.onEnded?.(new_state === 'canceled'); }
     });
     active.on('error', failure => {
       if (!valid()) return;
@@ -138,35 +163,43 @@ export function useCaptions() {
       // Do not surface raw provider errors, which may contain request details.
       active.cancel();
       recording.current = null;
+      handlers.current.onEnded?.(true);
     });
   }, [cancel, resetAudience]);
 
-  const rehearse = useCallback((mode: TranslationMode = 'en_to_ja') => {
-    cancel(); setError(''); setMuted(false); setCaptions(emptyCaptions()); resetAudience();
+  const rehearse = useCallback((mode: TranslationMode = 'en_to_ja', displayMode: 'readable' | 'drafts' = 'readable') => {
+    cancel(); setError(''); setMuted(false); setCaptions(emptyCaptions());
+    displayConfig.current = { mode: displayMode, fallbackLanguage: fallbackTranslationLanguage(mode), maxLineCharacters: handlers.current.maxLineCharacters };
+    resetAudience();
     setStatus('rehearsal'); setStartedAt(Date.now()); setLastUpdate(null);
     let tick = 0;
     const update = () => {
-      const index = Math.floor(tick / 50) % rehearsalLines.length;
-      const progress = Math.min((tick % 50) / 27, 1);
+      const index = Math.floor(tick / 60) % rehearsalLines.length;
+      const phase = tick % 60;
       const line = rehearsalLines[index];
       const reverse = mode === 'ja_to_en' || (mode === 'auto' && index % 2 === 1);
       const translation = reverse ? line.en : line.ja;
-      const partial = Array.from(translation).slice(0, Math.max(1, Math.ceil(Array.from(translation).length * progress))).join('');
-      const sample: Captions = {
-        source: reverse ? line.ja : line.en, partialSource: '',
-        translation: progress === 1 ? translation : '', partialTranslation: progress < 1 ? partial : '',
-        translationLanguage: reverse ? 'en' : 'ja',
-      };
-      setCaptions(sample); setAudienceCaptions(sample);
-      setLastUpdate(Date.now()); tick++;
+      const source = reverse ? line.ja : line.en;
+      if (phase <= 27) {
+        const partial = Array.from(translation).slice(0, Math.max(1, Math.ceil(Array.from(translation).length * phase / 27))).join('');
+        const tokens: Token[] = [
+          { text: source, is_final: phase === 27, language: reverse ? 'ja' : 'en' },
+          { text: phase === 27 ? translation : partial, is_final: phase === 27, translation_status: 'translation', language: reverse ? 'en' : 'ja' },
+        ];
+        setCaptions(previous => accumulate(previous, tokens, fallbackTranslationLanguage(mode)));
+        audience.current = receiveCaptionDisplay(audience.current, tokens, Date.now());
+        setAudienceCaptions(captionDisplayOutput(audience.current));
+        setLastUpdate(Date.now());
+      }
+      tick++;
     };
     update(); timer.current = setInterval(update, 100);
   }, [cancel, resetAudience]);
 
   const clear = useCallback(() => {
     setCaptions(emptyCaptions());
-    audience.current = clearAudienceCaptions(audience.current);
-    setAudienceCaptions(audience.current.captions);
+    audience.current = clearCaptionDisplay(audience.current, Date.now());
+    setAudienceCaptions(captionDisplayOutput(audience.current));
   }, []);
 
   return { captions, audienceCaptions, status, error, muted, startedAt, lastUpdate, start, stop, rehearse, clear };

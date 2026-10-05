@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createMeetingStore } from './meetings.mjs';
 
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
@@ -23,8 +24,10 @@ export function createStore(databasePath) {
   const set = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
   if (!get.get('team')) set.run('team', JSON.stringify({ name: 'Your team', glossary: { terms: [], translationTerms: [], background: '' } }));
   if (!get.get('code_salt')) set.run('code_salt', randomBytes(32).toString('base64url'));
+  const meetings = createMeetingStore(db);
 
   return {
+    meetings,
     get salt() { return get.get('code_salt').value; },
     getTeam() { return JSON.parse(get.get('team').value); },
     updateTeam(team) { set.run('team', JSON.stringify(team)); return team; },

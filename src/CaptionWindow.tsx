@@ -36,7 +36,7 @@ export default function CaptionWindow() {
       {payload.status === 'rehearsal' && <span className="rehearsal-label">Rehearsal · Sample text · Microphone off</span>}
       {inactive ? <p className="output-state">{offline ? 'Presenter disconnected' : payload.status === 'reconnecting' ? 'Reconnecting…' : payload.status === 'error' ? 'Captions interrupted' : 'Captions stopped'}</p> : <>
         {options.showEnglish && <p className="caption-source">{payload.english}</p>}
-        <CaptionText final={payload.japanese} partial={payload.partialJapanese} language={payload.translationLanguage} />
+        <CaptionText final={payload.japanese} partial={payload.partialJapanese} language={payload.translationLanguage} stableLines={payload.stableLines} />
         {!payload.japanese && !payload.partialJapanese && <p className="output-state">Waiting for captions</p>}
       </>}
     </div>
