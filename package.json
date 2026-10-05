@@ -1,8 +1,8 @@
 {
   "name": "stage-captions",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
-  "description": "English to Japanese captions for team presentations",
+  "description": "English and Japanese live captions for team presentations",
   "type": "module",
   "main": "electron/main.cjs",
   "engines": {

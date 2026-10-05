@@ -21,7 +21,7 @@ module.exports = {
     entitlements: 'electron/entitlements.mac.plist',
     entitlementsInherit: 'electron/entitlements.mac.plist',
     extendInfo: {
-      NSMicrophoneUsageDescription: 'Stage uses your microphone to create live Japanese captions while you present.',
+      NSMicrophoneUsageDescription: 'Stage uses your microphone to create live English and Japanese captions while you present.',
     },
   },
   win: { target: ['nsis'] },
@@ -29,7 +29,7 @@ module.exports = {
   linux: {
     target: ['AppImage', 'deb'],
     category: 'Office',
-    synopsis: 'Live Japanese captions for presentations',
+    synopsis: 'Live English and Japanese captions for presentations',
     ...(process.env.STAGE_APP_MAINTAINER ? { maintainer: process.env.STAGE_APP_MAINTAINER } : {}),
     desktop: { entry: { StartupWMClass: 'Stage' } },
   },

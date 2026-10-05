@@ -168,7 +168,9 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<'NOTES'
-          Stage pilot: live English-to-Japanese captions in a floating desktop window.
+          Stage pilot: live English ↔ Japanese captions in a floating desktop window.
+
+          Choose automatic two-way translation or a fixed direction, Responsive or More context caption pacing, and a text size from 24–96 px. The reserved-space sample remains a local preview; screen capture and app resizing are not included.
 
           Download the installer for your computer:
           - Apple Silicon Mac: mac-arm64.dmg (or .zip)
@@ -179,6 +181,8 @@ jobs:
           Mac pilot apps use ad-hoc signatures for integrity. They do not have Apple Developer ID signatures and are not notarized, so macOS may block them pending explicit approval. Windows installers are unsigned and may also show security warnings. Windows ARM and Linux ARM installers are not included.
 
           On first launch, enter the HTTPS server address and shared team access code supplied by your organizer. No team credentials or Soniox API key are included in the installers. Microphone audio is sent directly to Soniox when you start live captions.
+
+          Your organizer must update the hosted team server to make the new controls available. Existing v0.1.3 apps can load those controls after restarting; install v0.1.4 for the updated native overlay language handling. Publishing these installers does not deploy a team server.
 
           Run a rehearsal with your microphone, projector, presentation apps, and fullscreen modes before your event. A successful build does not verify every operating system's overlay behavior or the accuracy of your team's speech.
 

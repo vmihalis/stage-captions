@@ -2,9 +2,7 @@
 
 Live English ↔ Japanese subtitles for presentations. The desktop app places a caption overlay above your slides, browser, and other apps on the screen you choose.
 
-This local preview branch adds automatic two-way translation and caption pacing. These changes have not been deployed to the team server or included in the published v0.1.3 installers.
-
-The local preview also compares a floating overlay with a reserved top/bottom caption strip using a fitted sample slide. It does not capture screens or resize apps. For a real reserved-space output, an extended projector can show a Stage presentation window while the presenter operates the original apps on the laptop. Mirroring the same screen requires windowed apps with space left for captions; arbitrary fullscreen apps cannot be forced to leave a strip through a portable Electron setting. See [Electron displays](https://www.electronjs.org/docs/latest/api/structures/display) and [Windows fullscreen appbar behavior](https://learn.microsoft.com/en-us/windows/win32/shell/abn-fullscreenapp). Screen capture and its platform-specific permission flow remain separate work.
+Version 0.1.4 adds automatic English ↔ Japanese translation, **Responsive** and **More context** caption pacing, and editable text sizes from **24–96 px**. Hosted controls become available when your organizer updates the team server.
 
 **[Download the latest release](https://github.com/vmihalis/stage-captions/releases/latest)** · [All releases](https://github.com/vmihalis/stage-captions/releases) · [Host a team server](deploy/README.md)
 
@@ -16,7 +14,7 @@ Your organizer provides a **team server address** and a **shared team access cod
 2. Open **Stage**. Enter the **Team server address** supplied by your organizer, such as `https://captions.example.com`, and choose **Connect to Stage**.
 3. Choose **Connect team** and enter the shared access code.
 4. Select your microphone, choose **Check mic**, and allow microphone access when prompted. This short microphone check stays on your computer.
-5. Under **Caption output**, select the display connected to the projector. Adjust text size and position.
+5. Under **Caption output**, select the display connected to the projector. Enter a **Text size (px)** from 24–96 and choose the top or bottom position.
 6. Choose **Translation** before starting: **Automatic · English ↔ Japanese**, or a fixed direction. Choose **Start captions**. The overlay opens automatically. Switch to your presentation.
 
 Try **Run a rehearsal** first to check placement without using a microphone or translation account. Then rehearse with a real speaker and the actual projector to check accuracy and delay.
@@ -30,6 +28,8 @@ Choose **Caption pace** before starting live captions. **Responsive** uses Sonio
 The overlay lets clicks pass through to the app underneath. **Cmd+Shift+H** on Mac or **Ctrl+Shift+H** on Windows/Linux opens, hides, or shows captions. The **Show captions on screen / Hide captions** button does the same. Old text clears after six seconds without new recognized words or translation updates; late translations get a fresh reading window. Hiding keeps listening; choose **Stop captions** to stop translation. Closing Stage also ends capture.
 
 The website is a browser preview with a separate caption window. Install the desktop app for the floating overlay. A team connection lasts seven days; click **Team connected** to disconnect this computer.
+
+The v0.1.3 desktop app can load the new controls after the team server is updated; close and reopen Stage to refresh them. Install v0.1.4 for the updated native overlay language handling.
 
 ### Choose a download
 
@@ -79,3 +79,5 @@ npm run check
 ```
 
 See [desktop development and packaging](electron/README.md) for native checks and installer builds. Secrets, local databases, and generated installers are excluded from Git; release installers are distributed as GitHub release assets.
+
+For local layout experiments, set `VITE_STAGE_PREVIEW=true` when starting Vite or building. This enables a fitted sample slide with a reserved top/bottom caption strip. The sample is excluded from production builds with `VITE_STAGE_PREVIEW=false`; Stage does not capture screens, resize other apps, or reserve space in arbitrary fullscreen presentations.
