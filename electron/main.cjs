@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, session, globalShortcut, Menu, desktopCapturer, dialog, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, globalShortcut, Menu, desktopCapturer, dialog, Tray, nativeImage, systemPreferences } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -9,6 +9,7 @@ const { createPresentation } = require('./presentation.cjs');
 const { createSummaryRunner } = require('./summary.cjs');
 const { summaryEnvironment } = require('./summary-config.cjs');
 const { createController, workspaceURL, isWorkspaceURL, createOwnedSummaryRunner } = require('./controller.cjs');
+const { createWindowLayout } = require('./window-layout.cjs');
 let summaryRunner = createSummaryRunner();
 let summaryTasks = createOwnedSummaryRunner(summaryRunner);
 
@@ -20,6 +21,8 @@ let controller;
 let connectionWindow;
 let overlayWindow;
 let presentation;
+let windowLayout;
+let autoArrangeEnabled = false;
 let trustedOrigin = '';
 let connectionMessage = '';
 let changingServer = false;
@@ -109,6 +112,15 @@ function sendOverlayState() {
   }
 }
 
+function syncWindowLayout() {
+  if (!windowLayout) return;
+  if (!autoArrangeEnabled || overlayOptions.outputMode !== 'window' || !overlayWindow ||
+      overlayWindow.isDestroyed() || !overlayWindow.isVisible()) { windowLayout.stop(); return; }
+  const display = chooseDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, overlayOptions.displayId);
+  if (!display) { windowLayout.stop(); return; }
+  windowLayout.start(display.workArea, overlayWindow.getBounds(), overlayOptions.position);
+}
+
 function positionOverlay() {
   presentation?.displaysChanged();
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
@@ -117,6 +129,7 @@ function positionOverlay() {
   const mode = overlayOptions.outputMode || 'overlay';
   overlayOptions.displayId = String(display.id);
   overlayWindow.setBounds((mode === 'window' ? separateWindowBounds : overlayBounds)(display.workArea, overlayOptions), false);
+  syncWindowLayout();
 }
 
 function configureOverlay(options) {
@@ -161,10 +174,11 @@ async function openOverlay(options) {
       // Keep both caption outputs on every Desktop and fullscreen Space without hiding Stage's Dock icon.
       createdWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     } else if (!windowed && process.platform === 'linux') createdWindow.setVisibleOnAllWorkspaces(true);
-    createdWindow.on('show', sendOverlayState);
-    createdWindow.on('hide', sendOverlayState);
+    createdWindow.on('show', () => { sendOverlayState(); syncWindowLayout(); });
+    createdWindow.on('hide', () => { sendOverlayState(); windowLayout?.stop(); });
     createdWindow.on('closed', () => {
       if (overlayWindow !== createdWindow) return;
+      windowLayout?.stop();
       overlayWindow = undefined;
       overlayReady = false;
       sendOverlayState();
@@ -399,6 +413,14 @@ function configureMenu() {
     { label: 'Hide / show Stage remote', accelerator: 'CommandOrControl+Shift+B', click: () => controller?.toggle() },
     { label: 'Hide / show captions', accelerator: 'CommandOrControl+Shift+H', click: toggleOverlay },
     { label: 'Close captions', click: closeOverlay },
+    ...(process.platform === 'darwin' ? [{ label: 'Auto-arrange app windows for captions', type: 'checkbox', checked: autoArrangeEnabled,
+      click: item => {
+        autoArrangeEnabled = item.checked;
+        void fs.writeFile(path.join(app.getPath('userData'), 'window-layout.json'),
+          JSON.stringify({ enabled: autoArrangeEnabled }), { mode: 0o600 }).catch(() => {});
+        if (autoArrangeEnabled) systemPreferences.isTrustedAccessibilityClient(true);
+        syncWindowLayout();
+      } }] : []),
     { type: 'separator' }, { role: 'quit' },
   ] };
   Menu.setApplicationMenu(Menu.buildFromTemplate([appMenu, { role: 'editMenu' },
@@ -436,6 +458,13 @@ async function savedOrigin() {
 app.whenReady().then(async () => {
   summaryRunner = createSummaryRunner({ env: await summaryEnvironment(app.getPath('userData')) });
   summaryTasks = createOwnedSummaryRunner(summaryRunner);
+  if (process.platform === 'darwin') {
+    try {
+      const saved = JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'window-layout.json'), 'utf8'));
+      autoArrangeEnabled = saved.enabled === true;
+    } catch { /* Auto-arrange is opt-in. */ }
+    windowLayout = createWindowLayout({ app });
+  }
   controller = createController({ app, screen, Tray, Menu, nativeImage, onAction: sendControllerAction,
     onWorkspace: view => { void openWorkspace(view).catch(() => {}); } });
   denyPermissions('stage-overlay');
@@ -458,6 +487,6 @@ app.whenReady().then(async () => {
 });
 
 app.on('activate', () => { if (mainWindow && !mainWindow.isDestroyed()) controller?.show(); else connectionWindow?.show(); });
-app.on('before-quit', () => { quitting = true; summaryTasks.cancel(); closeOverlay(); clearControllerShell(); });
+app.on('before-quit', () => { quitting = true; windowLayout?.stop(); summaryTasks.cancel(); closeOverlay(); clearControllerShell(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => { if (!changingServer) app.quit(); });

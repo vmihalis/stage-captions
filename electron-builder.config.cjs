@@ -4,6 +4,7 @@ module.exports = {
   asar: true,
   directories: { output: 'release' },
   files: ['electron/**/*', 'package.json'],
+  extraFiles: process.platform === 'darwin' ? [{ from: 'build/mac/StageWindowLayout.app', to: 'Helpers/StageWindowLayout.app' }] : [],
   extraMetadata: { main: 'electron/main.cjs', dependencies: {},
     ...(process.env.STAGE_APP_HOMEPAGE ? { homepage: process.env.STAGE_APP_HOMEPAGE } : {}) },
   artifactName: 'Stage-${version}-${os}-${arch}.${ext}',

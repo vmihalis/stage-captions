@@ -56,6 +56,10 @@ async function smoke() {
   const selected = displays[displays.length - 1];
   const toggle = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.accelerator === 'CommandOrControl+Shift+H');
   assert.ok(toggle, 'The caption shortcut must have an application menu fallback.');
+  if (process.platform === 'darwin') {
+    const arrange = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === 'Auto-arrange app windows for captions');
+    assert.equal(arrange?.checked, false, 'Other apps must not be resized until the presenter opts in.');
+  }
   const initialState = await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()');
   assert.deepEqual(initialState, { open: false, visible: false,
     shortcutRegistered: globalShortcut.isRegistered('CommandOrControl+Shift+H'),
