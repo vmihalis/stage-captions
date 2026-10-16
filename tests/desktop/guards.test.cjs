@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeServerOrigin, matchesOrigin, normalizeOverlayOptions, normalizeCaptionPayload,
-  chooseDisplay, overlayBounds } = require('../../electron/guards.cjs');
+  chooseDisplay, overlayBounds, separateWindowBounds } = require('../../electron/guards.cjs');
 
 const options = { fontSize: 48, position: 'bottom', showEnglish: true, opacity: .88, clickThrough: true };
 
@@ -54,6 +54,17 @@ test('placement stays within external displays with negative desktop coordinates
     assert.ok(bounds.x + bounds.width <= area.x + area.width);
     assert.ok(bounds.y + bounds.height <= area.y + area.height);
     assert.ok(bounds.width > 0 && bounds.height > 0);
+  }
+});
+
+test('caption window fills the reserved top or bottom strip edge to edge', () => {
+  const area = { x: -1920, y: 25, width: 1920, height: 1010 };
+  for (const position of ['top', 'bottom']) {
+    const bounds = separateWindowBounds(area, { ...options, position });
+    assert.equal(bounds.x, area.x);
+    assert.equal(bounds.width, area.width);
+    assert.equal(bounds.y, position === 'top' ? area.y : area.y + area.height - bounds.height);
+    assert.ok(bounds.height > 0 && bounds.height < area.height);
   }
 });
 

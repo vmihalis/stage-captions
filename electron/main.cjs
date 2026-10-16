@@ -109,16 +109,13 @@ function sendOverlayState() {
   }
 }
 
-function positionOverlay(force = false) {
+function positionOverlay() {
   presentation?.displaysChanged();
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   const display = chooseDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, overlayOptions.displayId);
   if (!display) return;
   const mode = overlayOptions.outputMode || 'overlay';
-  const movedDisplay = overlayOptions.displayId !== String(display.id);
   overlayOptions.displayId = String(display.id);
-  // A normal caption window belongs to the presenter: font changes preserve its bounds.
-  if (mode === 'window' && !force && !movedDisplay) return;
   overlayWindow.setBounds((mode === 'window' ? separateWindowBounds : overlayBounds)(display.workArea, overlayOptions), false);
 }
 
@@ -129,12 +126,11 @@ function configureOverlay(options) {
   const preferred = next.displayId || (next.outputMode === 'presentation' ? String(displays.find(display => display.id !== primaryId)?.id || primaryId) : undefined);
   next.displayId = String(chooseDisplay(displays, primaryId, preferred)?.id || '');
   const changedMode = (next.outputMode || 'overlay') !== (overlayOptions.outputMode || 'overlay');
-  const changedDisplay = next.displayId !== overlayOptions.displayId;
   if (changedMode) closeOverlay(true);
   overlayOptions = next;
   if (next.outputMode === 'presentation') presentation.configure(next);
   else {
-    positionOverlay(changedDisplay);
+    positionOverlay();
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.setIgnoreMouseEvents(next.outputMode !== 'window' && next.clickThrough);
     }
@@ -151,17 +147,18 @@ async function openOverlay(options) {
     const display = chooseDisplay(screen.getAllDisplays(), screen.getPrimaryDisplay().id, overlayOptions.displayId);
     if (!display) throw new Error('No display is available for captions.');
     overlayWindow = new BrowserWindow({ ...(windowed ? separateWindowBounds : overlayBounds)(display.workArea, overlayOptions),
-      title: 'Stage captions', show: false, transparent: !windowed, frame: windowed, hasShadow: windowed,
-      resizable: windowed, movable: windowed, minimizable: windowed, maximizable: windowed,
-      ...(windowed ? { minWidth: 420, minHeight: 180, backgroundColor: '#151b12' } : {}),
-      fullscreenable: false, focusable: windowed, skipTaskbar: !windowed,
-      ...(!windowed && process.platform === 'darwin' ? { type: 'panel' } : {}),
+      title: 'Stage captions', show: false, transparent: !windowed, frame: false, hasShadow: false,
+      roundedCorners: !windowed,
+      resizable: false, movable: false, minimizable: false, maximizable: false,
+      ...(windowed ? { backgroundColor: '#151b12' } : {}),
+      fullscreenable: false, focusable: false, skipTaskbar: true,
+      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
       webPreferences: rendererPreferences('overlay-preload.cjs', 'stage-overlay') });
     const createdWindow = overlayWindow;
     guardNavigation(createdWindow, url => url === localURL('overlay.html'));
-    if (!windowed) createdWindow.setAlwaysOnTop(true, 'screen-saver');
-    if (!windowed && process.platform === 'darwin') {
-      // A nonactivating panel joins fullscreen Spaces without hiding Stage's Dock icon.
+    createdWindow.setAlwaysOnTop(true, windowed ? 'floating' : 'screen-saver');
+    if (process.platform === 'darwin') {
+      // Keep both caption outputs on every Desktop and fullscreen Space without hiding Stage's Dock icon.
       createdWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     } else if (!windowed && process.platform === 'linux') createdWindow.setVisibleOnAllWorkspaces(true);
     createdWindow.on('show', sendOverlayState);
@@ -186,8 +183,7 @@ async function openOverlay(options) {
   if (ownWindow.isDestroyed() || overlayWindow !== ownWindow) return;
   positionOverlay();
   ownWindow.setIgnoreMouseEvents(!windowed && overlayOptions.clickThrough);
-  if (windowed) ownWindow.show();
-  else ownWindow.showInactive();
+  ownWindow.showInactive();
   sendCaptions();
   sendOverlayState();
 }
@@ -452,7 +448,7 @@ app.whenReady().then(async () => {
   registerIPC();
   configureMenu();
   screen.on('display-removed', () => { positionOverlay(); controller.displaysChanged(); });
-  screen.on('display-metrics-changed', () => { positionOverlay(true); controller.displaysChanged(); });
+  screen.on('display-metrics-changed', () => { positionOverlay(); controller.displaysChanged(); });
   screen.on('display-added', () => { positionOverlay(); controller.displaysChanged(); });
   let origin;
   try { origin = await savedOrigin(); }

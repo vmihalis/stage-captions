@@ -1,6 +1,6 @@
 # Stage
 
-Live English ↔ Japanese subtitles for presentations. Choose floating captions, a movable caption window beside your apps, or a presentation view with a reserved caption strip on an extended projector.
+Live English ↔ Japanese subtitles for presentations. Choose floating captions, a borderless caption strip beside your apps, or a presentation view with a reserved caption strip on an extended projector.
 
 Version 0.1.6 puts the presenter controls in a **small floating remote**. Start, pause, choose caption output, and bookmark moments from the bar; open settings when needed and review meetings in a separate window. Install v0.1.6 and use an updated team server for the compact native remote and separate workspace.
 
@@ -14,7 +14,7 @@ Your organizer provides a **team server address** and a **shared team access cod
 2. Open **Stage**. Enter the **Team server address** supplied by your organizer, such as `https://captions.example.com`, and choose **Connect to Stage**.
 3. Choose **Start** or **⋯ → Connect team** and enter the shared access code.
 4. Open **⋯ → Settings**, select your microphone, choose **Check mic**, and allow microphone access when prompted. This short microphone check stays on your computer. Enter a **Text size** from 24–96 px and choose the top or bottom caption position.
-5. Click the **output icon** to choose **Overlay**, **Window**, or **Slides + strip**, and select your display. Window works beside windowed content on mirrored displays. Slides + strip captures explicitly selected content for an independent extended display; it cannot reserve space inside an arbitrary fullscreen app.
+5. Click the **output icon** to choose **Overlay**, **Window**, or **Slides + strip**, and select your display. Window fills a borderless strip across the top or bottom of the usable screen and follows macOS Desktop changes; size windowed slides to the remaining area on mirrored displays. Slides + strip captures explicitly selected content for an independent extended display; it cannot reserve space inside an arbitrary fullscreen app.
 6. Click the **language button** to choose automatic or fixed-direction translation, then **Start**. Stage saves finalized speech and translations to your shared meeting history. Let participants know before starting; everyone with the team code can read and export the transcript.
 7. Use **Pause / Resume** for a break and **⋯ → End & save** to finish. Open **⋯ → Meetings** to review the transcript, exports, and marked moments in a separate workspace.
 
@@ -47,7 +47,7 @@ The initial release targets these four platforms. Native Windows ARM64 and Linux
 
 **Mac installation:** move Stage to Applications before opening it. If macOS blocks it because the developer cannot be verified, confirm you downloaded this repository's latest release, then follow Apple's [app-specific approval instructions](https://support.apple.com/en-us/102445): attempt to open Stage, open **System Settings → Privacy & Security**, and choose **Open Anyway** for Stage. Do not disable Gatekeeper. Version 0.1.1 had an invalid bundle signature; replace it with 0.1.2 or later. If the current release still reports that it is damaged, stop and report the version and Mac model to your organizer rather than removing quarantine attributes.
 
-Fullscreen behavior depends on the operating system and display setup. Linux Wayland compositors can restrict overlay positioning or always-on-top behavior; an X11 session may be needed. Accent accuracy and delay depend on the speaker, microphone, network, and translation service; no accent or latency guarantee is implied.
+Fullscreen behavior depends on the operating system and display setup. The macOS Window strip remains visible across Desktops and fullscreen Spaces but does not resize other apps, so fullscreen content can sit behind the strip. Linux Wayland compositors can restrict overlay positioning or always-on-top behavior; an X11 session may be needed. Accent accuracy and delay depend on the speaker, microphone, network, and translation service; no accent or latency guarantee is implied.
 
 ## For organizers
 

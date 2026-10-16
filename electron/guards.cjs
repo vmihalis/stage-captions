@@ -83,8 +83,12 @@ function overlayBounds(workArea, options) {
 }
 
 function separateWindowBounds(workArea, options) {
-  const bounds = overlayBounds(workArea, options);
-  return { ...bounds, width: Math.min(bounds.width, 1100) };
+  // Window output owns the entire reserved strip, edge to edge within the usable display.
+  const height = Math.min(workArea.height, Math.ceil(options.fontSize * 2.9
+    + (options.showEnglish ? options.fontSize * 0.8 : 0) + 96));
+  return { x: Math.round(workArea.x), y: Math.round(options.position === 'top'
+    ? workArea.y : workArea.y + workArea.height - height),
+  width: Math.round(workArea.width), height: Math.round(height) };
 }
 
 function captureSourceAllowed(source, outputDisplay, displays, ownIds) {
