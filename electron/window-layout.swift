@@ -14,12 +14,6 @@ private struct Frame {
     var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
 }
 
-private struct AdjustedWindow {
-    let element: AXUIElement
-    let original: Frame
-    var applied: Frame
-}
-
 private func frame(_ element: AXUIElement) -> Frame? {
     var positionRef: CFTypeRef?
     var sizeRef: CFTypeRef?
@@ -76,11 +70,6 @@ private func fitted(_ original: Frame, display: Frame, safe: Frame) -> Frame? {
     return result
 }
 
-private func sameFrame(_ left: Frame, _ right: Frame) -> Bool {
-    abs(left.x - right.x) <= 2 && abs(left.y - right.y) <= 2 &&
-    abs(left.width - right.width) <= 2 && abs(left.height - right.height) <= 2
-}
-
 private func announce(_ state: String) {
     print("{\"state\":\"\(state)\"}")
     fflush(stdout)
@@ -119,13 +108,16 @@ let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
 var trusted = AXIsProcessTrustedWithOptions(promptOptions)
 if !trusted { announce("permission-required") }
 var readyAnnounced = false
-private var adjusted: [String: AdjustedWindow] = [:]
 private var lastWindowState = ""
 private func reportWindowState(_ state: String) {
     if state != lastWindowState { announce(state); lastWindowState = state }
 }
 
 while getppid() == parentPID {
+    // NSWorkspace refreshes frontmostApplication through main-run-loop events.
+    // This helper has no NSApplication loop, so service those events explicitly
+    // before checking which app the presenter has switched to.
+    _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.001))
     if !trusted { trusted = AXIsProcessTrusted() }
     if trusted {
         if !readyAnnounced { announce("ready"); readyAnnounced = true }
@@ -141,11 +133,7 @@ while getppid() == parentPID {
                 let window = windowRef as! AXUIElement
                 if isStandardResizableWindow(window), let current = frame(window) {
                     if let target = fitted(current, display: display, safe: safe) {
-                        let key = "\(application.processIdentifier):\(CFHash(window))"
-                        let previous = adjusted[key]
                         if setFrame(window, target) {
-                            adjusted[key] = AdjustedWindow(element: window, original: previous?.original ?? current,
-                                                           applied: frame(window) ?? target)
                             reportWindowState("adjusted")
                         } else { reportWindowState("resize-failed") }
                     } else { reportWindowState("already-clear-or-other-display") }
@@ -164,9 +152,4 @@ while getppid() == parentPID {
     }
 }
 
-for entry in adjusted.values {
-    if let current = frame(entry.element), sameFrame(current, entry.applied) {
-        _ = setFrame(entry.element, entry.original)
-    }
-}
 announce("stopped")
