@@ -1,6 +1,6 @@
 # Stage desktop
 
-The Electron shell loads the team-hosted Stage app into a compact floating remote, with separate caption output and a normal window for meeting history and vocabulary. Presenters should start with the [installation and onboarding guide](../README.md#for-presenters). The compact native remote and separate workspace require the v0.1.6 installer and an updated hosted app.
+The Electron shell loads the team-hosted Stage app into a compact floating remote, with separate caption output and a normal window for meeting history and vocabulary. Presenters should start with the [installation and onboarding guide](../README.md#for-presenters). The borderless Window strip requires the v0.1.7 installer; the compact remote and separate workspace also need a v0.1.6 or newer hosted app.
 
 ## Development
 
@@ -35,7 +35,7 @@ Mac pilot builds are ad-hoc signed (`identity: '-'`), with strict verification a
 The Mac release gate verifies the built app, the app mounted read-only from the DMG, and the app extracted from the ZIP. It checks strict signatures, resource seals, Stage's bundle identifier and version, plus the DMG checksum before a separate startup smoke test. To run it locally after packaging:
 
 ```sh
-node tests/desktop/mac-distribution-check.mjs release/mac-arm64/Stage.app release/Stage-0.1.6-mac-arm64.dmg release/Stage-0.1.6-mac-arm64.zip
+node tests/desktop/mac-distribution-check.mjs release/mac-arm64/Stage.app release/Stage-0.1.7-mac-arm64.dmg release/Stage-0.1.7-mac-arm64.zip
 ```
 
 Smooth public Mac distribution requires the maintainer's Apple Developer ID certificate and notarization credentials. That future configuration must sign all nested code with the same identity, retain hardened runtime, notarize and staple the app, and set `STAGE_REQUIRE_NOTARIZATION=1` on the distribution gate. That mode additionally requires Developer ID, Gatekeeper acceptance, and a stapled ticket; the pilot gate makes none of those claims.
@@ -62,7 +62,7 @@ The bundled Noto Sans JP font is covered by the [SIL Open Font License](fonts/OF
 The API v2 desktop bridge supports `overlay`, `window`, and `presentation` through the optional `outputMode` setting. An omitted mode preserves the original floating overlay. `getCapabilities()` advertises supported modes; hosted UI must offer an update message when it runs in older desktop builds.
 
 - **Overlay:** the original click-through floating captions. It can cover content; it does not reserve space inside another app.
-- **Window:** an ordinary movable, resizable caption window for positioning beside windowed slides or apps, including a mirrored projector. Font and language changes preserve manual window bounds. Selecting a different display resets its placement.
+- **Window:** a borderless caption strip that fills the usable display width at the chosen top or bottom edge, including on a mirrored projector. On macOS it follows Desktop and app switches, including fullscreen Spaces. **Stage → Auto-arrange app windows for captions** is opt-in and requires macOS Accessibility access for its `StageWindowLayout` helper. If macOS does not show a prompt, add `/Applications/Stage.app/Contents/Helpers/StageWindowLayout.app` in **System Settings → Privacy & Security → Accessibility**. It moves or resizes the active standard window on the caption display into the remaining area. Adjusted windows stay there when captions hide, so use the window's Zoom control if you want it to fill the screen again. Native fullscreen windows, dialogs, other displays, and apps that reject accessibility resizing are skipped. Windows does not auto-arrange other apps; keep slides windowed above the strip or use Slides + strip on an extended display. Stage sizes the strip height for the selected caption text size. Show, hide, and position the strip from the Stage remote or caption shortcut.
 - **Slides + strip** (`presentation`): a Stage-owned fullscreen output for an extended display. A trusted local picker asks the presenter to choose a window or control screen. The captured video uses `object-fit: contain` and a separate top/bottom caption row, so captions never cover the captured content. The original app remains the control surface. Stage does not remote-control it or alter its fullscreen layout.
 
 The picker enumerates sources only after its local button is pressed. Stage windows, the output screen, screens with unknown display IDs, and mirrored/overlapping screens are excluded where detectable. Keep a selected application window on the control screen and leave it visible; operating systems can pause capture of minimized or protected windows. Presentation mode requires independent display coordinates. **Escape**, selecting another source, losing the output display, closing output, and quitting Stage stop that capture. Hiding output with the caption shortcut or output panel preserves the selected stream until it is stopped or closed; hiding the remote also preserves it.

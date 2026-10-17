@@ -20,6 +20,8 @@ body.top { align-items: flex-start; }
 [hidden] { display: none !important; }
 
 body.windowed { background: #151b12; align-items: center; }
-body.windowed #caption-card { border-radius: 0; background: #151b12; }
+body.windowed #caption-card { height: 100%; display: flex; flex-direction: column; justify-content: center;
+  border-radius: 0; background: #151b12; }
+body.windowed #caption-status { align-self: flex-start; }
 body.stable-captions #japanese { height: 2.9em; white-space: nowrap; }
 body.stable-captions #committed, body.stable-captions #partial { display: block; height: 1.45em; overflow: hidden; white-space: nowrap; color: inherit; }

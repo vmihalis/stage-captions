@@ -1,6 +1,6 @@
 // Run with: npx electron tests/desktop/native-smoke.cjs
 // Uses a loopback fixture and synthetic microphone; never contacts Soniox or records a real device.
-const { app, BrowserWindow, Menu, globalShortcut } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, screen } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
@@ -56,6 +56,10 @@ async function smoke() {
   const selected = displays[displays.length - 1];
   const toggle = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.accelerator === 'CommandOrControl+Shift+H');
   assert.ok(toggle, 'The caption shortcut must have an application menu fallback.');
+  if (process.platform === 'darwin') {
+    const arrange = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === 'Auto-arrange app windows for captions');
+    assert.equal(arrange?.checked, false, 'Other apps must not be resized until the presenter opts in.');
+  }
   const initialState = await main.webContents.executeJavaScript('window.stageDesktop.getOverlayState()');
   assert.deepEqual(initialState, { open: false, visible: false,
     shortcutRegistered: globalShortcut.isRegistered('CommandOrControl+Shift+H'),
@@ -199,7 +203,7 @@ async function smoke() {
   assert.equal(await main.webContents.executeJavaScript('window.overlayStates.length'), states.length,
     'The bridge must remove state subscriptions when asked.');
 
-  testStage = 'movable caption window and stable rows';
+  testStage = 'edge-to-edge caption strip and stable rows';
   const capabilities = await main.webContents.executeJavaScript('window.stageDesktop.getCapabilities()');
   assert.equal(typeof capabilities.summaryWorker, 'boolean');
   assert.equal(capabilities.controllerShortcutRegistered, globalShortcut.isRegistered('CommandOrControl+Shift+B'));
@@ -210,29 +214,42 @@ async function smoke() {
   const windowOptions = { displayId: selected.id, fontSize: 48, position: 'bottom', showEnglish: false,
     opacity: .88, clickThrough: true, outputMode: 'window' };
   await main.webContents.executeJavaScript(`window.stageDesktop.openOverlay(${JSON.stringify(windowOptions)})`);
-  const movable = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
-  assert.equal(movable.isResizable(), true);
-  assert.equal(movable.isMovable(), true);
-  assert.equal(movable.isFocusable(), true);
-  assert.equal(movable.isAlwaysOnTop(), false);
-  const manualBounds = { ...movable.getBounds(), x: movable.getBounds().x + 10, width: 800, height: 340 };
-  movable.setBounds(manualBounds);
+  const strip = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
+  assert.equal(strip.isResizable(), false);
+  assert.equal(strip.isMovable(), false);
+  assert.equal(strip.isFocusable(), false);
+  assert.equal(strip.isAlwaysOnTop(), true);
+  if (process.platform === 'darwin') {
+    assert.equal(strip.isVisibleOnAllWorkspaces(), true);
+    assert.equal(app.dock.isVisible(), true, 'The caption strip must keep Stage recoverable from the Dock.');
+  }
+  const area = screen.getAllDisplays().find(display => String(display.id) === selected.id).workArea;
+  assert.equal(strip.getBounds().x, area.x);
+  assert.equal(strip.getBounds().width, area.width);
+  assert.equal(strip.getBounds().y + strip.getBounds().height, area.y + area.height);
+  await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify({ english: '', japanese: '', status: 'stopped' })})`);
+  await eventually(() => strip.webContents.executeJavaScript(`!document.getElementById('caption-status').hidden`));
+  const stripLayout = await strip.webContents.executeJavaScript(`({ card: document.getElementById('caption-card').getBoundingClientRect().width,
+    viewport: window.innerWidth, badge: document.getElementById('caption-status').getBoundingClientRect().width })`);
+  assert.equal(stripLayout.card, stripLayout.viewport, 'The caption background must fill the strip width.');
+  assert.ok(stripLayout.badge < 200, 'The status badge must not stretch across the strip.');
+  const originalHeight = strip.getBounds().height;
   await main.webContents.executeJavaScript(`window.stageDesktop.configureOverlay(${JSON.stringify({ ...windowOptions, fontSize: 52 })})`);
-  assert.deepEqual(movable.getBounds(), manualBounds, 'Font changes must preserve a manually sized caption window.');
+  assert.ok(strip.getBounds().height > originalHeight, 'Font changes must resize the reserved strip.');
+  assert.equal(strip.getBounds().y + strip.getBounds().height, area.y + area.height);
   await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify({ english: '', japanese: 'Ignored legacy words',
     stableLines: ['First anchored line', 'Second anchored line'], translationLanguage: 'en', status: 'live' })})`);
-  await eventually(() => movable.webContents.executeJavaScript(`document.getElementById('partial').textContent === 'Second anchored line'`));
-  assert.deepEqual(await movable.webContents.executeJavaScript(`(() => {
+  await eventually(() => strip.webContents.executeJavaScript(`document.getElementById('partial').textContent === 'Second anchored line'`));
+  assert.deepEqual(await strip.webContents.executeJavaScript(`(() => {
     const top = document.getElementById('committed').getBoundingClientRect();
     const bottom = document.getElementById('partial').getBoundingClientRect();
     return { separateRows: bottom.top >= top.bottom - 1, scrollTop: document.getElementById('japanese').scrollTop,
       mode: document.body.classList.contains('windowed') };
   })()`), { separateRows: true, scrollTop: 0, mode: true });
-  movable.setBounds({ ...manualBounds, width: 520 });
   await main.webContents.executeJavaScript(`window.stageDesktop.configureOverlay(${JSON.stringify({ ...windowOptions, fontSize: 96 })})`);
   await main.webContents.executeJavaScript(`window.stageDesktop.updateOverlay(${JSON.stringify({ english: '', japanese: '',
-    stableLines: ['This entire fixed caption line must fit inside a small window.', 'Both lines keep their original breaks.'], status: 'live' })})`);
-  await eventually(() => movable.webContents.executeJavaScript(`(() => {
+    stableLines: ['This entire fixed caption line must fit inside the full reserved strip. '.repeat(5), 'Both lines keep their original breaks.'], status: 'live' })})`);
+  await eventually(() => strip.webContents.executeJavaScript(`(() => {
     const row = document.getElementById('committed');
     const range = document.createRange(); range.selectNodeContents(row);
     const text = range.getBoundingClientRect();
@@ -240,7 +257,7 @@ async function smoke() {
     return parseFloat(getComputedStyle(document.getElementById('japanese')).fontSize) < 96 && text.right <= viewport.right + 1;
   })()`));
   await main.webContents.executeJavaScript(`window.stageDesktop.openOverlay(${JSON.stringify({ ...windowOptions, outputMode: 'overlay' })})`);
-  await eventually(() => movable.isDestroyed());
+  await eventually(() => strip.isDestroyed());
   const switched = await eventually(() => BrowserWindow.getAllWindows().find(window => window.getTitle() === 'Stage captions'));
   assert.equal(switched.isMovable(), false, 'Switching modes must replace native window properties.');
   await main.webContents.executeJavaScript('window.stageDesktop.closeOverlay()');

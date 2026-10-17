@@ -1,6 +1,6 @@
 {
   "name": "stage-captions",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "English and Japanese live captions for team presentations",
   "type": "module",
@@ -17,7 +17,7 @@
     "desktop": "electron .",
     "test": "node --import tsx --test tests/client/*.test.ts tests/server/*.test.mjs tests/desktop/*.test.cjs",
     "check": "npm run build && npm test",
-    "package:desktop": "electron-builder --config electron-builder.config.cjs",
+    "package:desktop": "node scripts/build-mac-layout.mjs && electron-builder --config electron-builder.config.cjs",
     "desktop:package": "npm run package:desktop",
     "test:desktop": "node --test tests/desktop/*.test.cjs",
     "desktop:preview": "electron scripts/preview-desktop.cjs"
