@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 if (process.platform === 'darwin') {
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
   const bundle = join(process.cwd(), 'build', 'mac', 'StageWindowLayout.app', 'Contents');
   const output = join(bundle, 'MacOS', 'StageWindowLayout');
   mkdirSync(join(bundle, 'MacOS'), { recursive: true });
@@ -14,7 +15,7 @@ if (process.platform === 'darwin') {
 <key>CFBundleExecutable</key><string>StageWindowLayout</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>0.1.6</string>
+<key>CFBundleShortVersionString</key><string>${version}</string>
 <key>LSUIElement</key><true/>
 </dict></plist>`);
   const result = spawnSync('xcrun', ['swiftc', '-O', '-framework', 'AppKit', '-framework', 'ApplicationServices',

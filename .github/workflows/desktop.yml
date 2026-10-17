@@ -87,6 +87,14 @@ jobs:
         timeout-minutes: 5
       - name: Package pilot installer
         run: npm run package:desktop -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Verify Windows native caption window
+        if: runner.os == 'Windows'
+        run: npx electron tests/desktop/native-smoke.cjs
+        timeout-minutes: 5
+      - name: Verify packaged Windows first launch
+        if: runner.os == 'Windows'
+        run: node tests/desktop/packaged-smoke.mjs release/win-unpacked/Stage.exe outputs/windows-packaged-setup.png
+        timeout-minutes: 3
       - name: Verify Mac app, DMG, and ZIP integrity
         if: runner.os == 'macOS'
         shell: bash
@@ -170,10 +178,11 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<'NOTES'
-          Stage v0.1.6 puts live English ↔ Japanese caption controls in a small floating remote.
+          Stage v0.1.7 adds a borderless, full-width caption strip for Mac, Windows, and Linux. It keeps the compact presenter remote and English ↔ Japanese caption controls.
 
           - **Start / Pause / Resume** from the bar. Use **⋯ → End & save** to finish a meeting.
-          - Click the **output icon** for **Overlay**, **Window**, or **Slides + strip**. Window sits beside windowed apps, including on mirrored displays. Slides + strip fits selected content above/below captions on an independent extended projector and requires screen recording permission.
+          - Click the **output icon** for **Overlay**, **Window**, or **Slides + strip**. Window fills the selected screen's top or bottom edge without a title bar. On Windows, keep slides windowed in the remaining area. Slides + strip fits selected content above/below captions on an independent extended projector and requires screen recording permission.
+          - On Mac, the Window strip follows Desktop and app switches. Optional **Stage → Auto-arrange app windows for captions** uses macOS Accessibility access to fit ordinary windows into the remaining area. Windows does not auto-arrange other apps.
           - Open **⋯** for Settings, Meetings, Vocabulary, and microphone-free Rehearse. Meetings and vocabulary open in a separate workspace while captions keep running.
           - **Cmd/Ctrl+Shift+B** hides or restores the remote; **Cmd/Ctrl+Shift+H** toggles captions. Stage's menu-bar/system-tray icon provides recovery if a shortcut is unavailable.
 
@@ -189,11 +198,11 @@ jobs:
           - Windows x64: win-x64.exe
           - Linux x64: linux-x86_64.AppImage or linux-amd64.deb
 
-          Choose End & save before quitting Stage, replace it with v0.1.6, and reopen it. Your team server address and existing login are kept. The new installer is required for the compact native remote and separate workspace; older apps show update guidance for unsupported actions. Your organizer must also update the hosted team server. Publishing installers does not deploy a team server.
+          Choose End & save before quitting Stage, replace it with v0.1.7, and reopen it. Your team server address and existing login are kept. The new installer is required for the borderless Window strip. The compact native remote and separate workspace require a v0.1.6 or newer hosted team server. Publishing installers does not deploy a team server.
 
           Mac pilot apps use ad-hoc signatures for integrity. They do not have Apple Developer ID signatures and are not notarized, so macOS may require Privacy & Security → Open Anyway. Windows installers are unsigned and may also show security warnings. Windows ARM and Linux ARM installers are not included.
 
-          No team credentials or Soniox API key are included. Microphone audio streams directly to Soniox. Local Mac rehearsal and automated tests cover the compact controls and native lifecycle, not every presentation setup. Windows, Linux, physical projectors, and each presenter's fullscreen apps still need rehearsal before an event. There is no universal accent or latency guarantee.
+          No team credentials or Soniox API key are included. Microphone audio streams directly to Soniox. Automated checks and Windows native and packaged-app smoke tests cover the caption window and startup without a live translation account. Physical projectors, Zoom audio routing, and each presenter's fullscreen apps still need rehearsal before an event. There is no universal accent or latency guarantee.
 
           SHA256SUMS contains checksums for every installer. See the repository README for onboarding and hosting.
           NOTES
