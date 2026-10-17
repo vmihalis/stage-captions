@@ -98,5 +98,7 @@ try {
       await exited;
     }
   }
-  await rm(profile, { recursive: true, force: true });
+  // Chromium child processes can release profile files shortly after the main
+  // process exits on Windows. Retry only this temporary-test cleanup.
+  await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
