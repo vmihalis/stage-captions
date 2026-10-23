@@ -59,7 +59,7 @@ Everyone with the shared code can use translation, edit **Vocabulary**, and read
 
 ## Develop locally
 
-Use Node.js 24 or newer and npm.
+Use Node.js 24.22.1 or newer from the Node 24 release line, plus npm.
 
 ```sh
 npm ci

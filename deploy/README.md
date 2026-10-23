@@ -63,4 +63,4 @@ Use `docker compose --env-file .env.production -f deploy/compose.yml down` to st
 
 ## Without Docker
 
-Use Node.js 24 or newer, `npm ci`, and `npm run build`. Configure `.env` from `.env.example`, set `NODE_ENV=production`, keep `HOST=127.0.0.1`, and run `npm start` under your service manager. Terminate HTTPS at a proxy or tunnel and follow the same origin, proxy-trust, credential, and backup guidance above.
+Use Node.js 24.22.1 or newer from the Node 24 release line, `npm ci`, and `npm run build`. Configure `.env` from `.env.example`, set `NODE_ENV=production`, keep `HOST=127.0.0.1`, and run `npm start` under your service manager. Terminate HTTPS at a proxy or tunnel and follow the same origin, proxy-trust, credential, and backup guidance above.
